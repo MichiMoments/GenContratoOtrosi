@@ -1,0 +1,30 @@
+{# REVISIÓN JURÍDICA PENDIENTE — redacción placeholder, no usar en firma sin aprobación. #}
+{# Markdown soportado por el conversor a .docx: '# ', '## ', '- ', '**negrita**' y  #}
+{# párrafos separados por línea en blanco. No usar tablas, enlaces ni otro Markdown. #}
+# OTROSÍ No. ______ AL CONTRATO DE TRABAJO No. {{ generales.numero_contrato }}
+
+## {{ tipo }}
+
+Entre **{{ empleador.razon_social }}**, identificada con NIT {{ empleador.nit }}, representada legalmente por {{ empleador.representante }} en calidad de {{ empleador.cargo_representante }}, quien en adelante se denominará **EL EMPLEADOR**, y **{{ generales.nombre_empleado }}**, identificado(a) con cédula de ciudadanía No. {{ generales.cedula }}, quien en adelante se denominará **EL TRABAJADOR**, se acuerda suscribir el presente otrosí al contrato de trabajo referenciado, en los siguientes términos:
+
+{% block clausula %}{% endblock %}
+
+**PARÁGRAFO.** Las demás cláusulas del contrato de trabajo original y de sus otrosíes anteriores continúan vigentes y sin modificación alguna, en cuanto no resulten contrarias a lo aquí acordado.
+
+Para constancia se firma en {{ generales.ciudad }}, el {{ generales.fecha_otrosi | fecha_larga }}.
+
+EL EMPLEADOR
+
+_______________________________
+
+{{ empleador.representante }}
+
+{{ empleador.cargo_representante }}
+
+EL TRABAJADOR
+
+_______________________________
+
+{{ generales.nombre_empleado }}
+
+C.C. {{ generales.cedula }}

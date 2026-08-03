@@ -1,0 +1,15 @@
+{# REVISIÓN JURÍDICA PENDIENTE — redacción placeholder. #}
+{% extends "base.md.j2" %}
+{% block clausula %}
+**PRIMERA. CAMBIO DE CARGO.** EL TRABAJADOR deja de desempeñar el cargo de {{ detalle.cargo_anterior }} y pasa a desempeñar el cargo de **{{ detalle.cargo_nuevo }}**, adscrito al área de {{ detalle.area }}, reportando directamente a {{ detalle.jefe_inmediato }}.
+
+**SEGUNDA. FUNCIONES.** En razón del cambio anterior, EL TRABAJADOR asume las siguientes funciones:
+
+{% for funcion in detalle.funciones_nuevas %}
+- {{ funcion }}
+{% endfor %}
+{% if detalle.salario %}
+
+**TERCERA. ASIGNACIÓN SALARIAL.** Con ocasión del cambio de cargo, la asignación salarial de EL TRABAJADOR queda en {{ detalle.salario.monto | moneda }} ({{ detalle.salario.nota }}).
+{% endif %}
+{% endblock %}

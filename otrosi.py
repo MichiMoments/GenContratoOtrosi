@@ -4,6 +4,8 @@ from datetime import date, datetime
 
 import streamlit as st
 
+import documento
+
 OPCIONES = {
     1: "Incremento/Ajuste salarial",
     2: "Cambio de cargo o promoción",
@@ -12,11 +14,23 @@ OPCIONES = {
     5: "Renovación de contrato",
 }
 
+CIUDADES = ["Bogotá D.C.", "Medellín", "Cali", "Barranquilla", "Cartagena", "Bucaramanga"]
+
 
 def campo_salario(label, key_prefix):
     monto = st.number_input(f"{label} - Monto", step=1, format="%d", key=f"{key_prefix}_monto")
     nota = st.text_input(f"{label} - Nota", key=f"{key_prefix}_nota")
     return {"monto": int(monto), "nota": nota}
+
+
+def campo_fecha_hora(label, key_prefix):
+    st.write(label)
+    col1, col2 = st.columns(2)
+    with col1:
+        fecha = st.date_input("Fecha", key=f"{key_prefix}_fecha")
+    with col2:
+        hora = st.time_input("Hora", key=f"{key_prefix}_hora")
+    return datetime.combine(fecha, hora)
 
 
 def campos_faltantes(campos):
@@ -43,6 +57,30 @@ def serializar(valor):
     return valor
 
 
+def render_globales():
+    """Campos comunes a todos los tipos de otrosí."""
+    data = {}
+    data["nombre_empleado"] = st.text_input("Nombre del empleado", key="nombre_empleado")
+    data["cedula"] = st.text_input("Cédula del empleado", key="cedula")
+    data["numero_contrato"] = st.text_input("Número de contrato", key="numero_contrato")
+    data["fecha_otrosi"] = campo_fecha_hora("Fecha del otrosí", "otrosi")
+    data["ciudad"] = st.selectbox(
+        "Ciudad",
+        CIUDADES,
+        index=None,
+        placeholder="Selecciona una ciudad",
+        key="ciudad",
+    )
+
+    requeridos = [
+        ("Nombre del empleado", data["nombre_empleado"]),
+        ("Cédula del empleado", data["cedula"]),
+        ("Número de contrato", data["numero_contrato"]),
+        ("Ciudad", data["ciudad"]),
+    ]
+    return data, requeridos
+
+
 def render_incremento_salarial():
     data = {}
     data["salario_anterior"] = campo_salario("Salario anterior", "sal_ant")
@@ -56,13 +94,7 @@ def render_incremento_salarial():
         unidad = st.selectbox("Unidad", ["días", "meses"], key="periodicidad_unidad")
     data["periodicidad"] = {"valor": int(valor), "unidad": unidad}
 
-    st.write("Fecha de efectividad")
-    col1, col2 = st.columns(2)
-    with col1:
-        fecha = st.date_input("Fecha", key="efectividad_fecha")
-    with col2:
-        hora = st.time_input("Hora", key="efectividad_hora")
-    data["fecha_efectividad"] = datetime.combine(fecha, hora)
+    data["fecha_efectividad"] = campo_fecha_hora("Fecha de efectividad", "efectividad")
 
     requeridos = [
         ("Salario anterior - Nota", data["salario_anterior"]["nota"]),
@@ -167,6 +199,10 @@ def main():
     st.set_page_config(page_title="Registro de novedades laborales", page_icon="📄")
     st.title("Registro de novedades laborales (otrosí)")
 
+    st.subheader("Datos generales")
+    globales, req_globales = render_globales()
+    st.divider()
+
     opcion = st.radio(
         "Tipo de cambio",
         list(OPCIONES.keys()),
@@ -178,13 +214,30 @@ def main():
     data, requeridos = RENDERERS[opcion]()
 
     if st.button("Enviar"):
-        faltantes = campos_faltantes(requeridos)
+        faltantes = campos_faltantes(req_globales + requeridos)
         if faltantes:
             st.error("Faltan campos obligatorios: " + ", ".join(faltantes))
         else:
-            st.success("Datos registrados correctamente.")
-            st.subheader("Resumen de los datos ingresados")
-            st.json(serializar(data))
+            payload = {
+                "tipo_id": opcion,
+                "tipo": OPCIONES[opcion],
+                "generales": globales,
+                "detalle": data,
+            }
+            md = documento.render_markdown(payload)
+
+            st.success("Documento generado.")
+            st.warning("Texto sujeto a revisión jurídica antes de usarse en firma.")
+            st.markdown(md)
+            st.download_button(
+                "Descargar .docx",
+                data=documento.markdown_a_docx(md),
+                file_name=documento.nombre_archivo(payload),
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+
+            with st.expander("Ver datos capturados (JSON)"):
+                st.json(serializar(payload))
 
 
 if __name__ == "__main__":

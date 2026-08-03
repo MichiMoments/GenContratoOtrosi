@@ -1,0 +1,9 @@
+{# REVISIÓN JURÍDICA PENDIENTE — redacción placeholder. #}
+{% extends "base.md.j2" %}
+{% block clausula %}
+**PRIMERA. CAMBIO DE JORNADA.** La jornada laboral de EL TRABAJADOR se modifica de {{ detalle.jornada_anterior_horas }} horas a **{{ detalle.jornada_nueva_horas }} horas**.
+{% if detalle.horario_anterior or detalle.horario_nuevo %}
+
+**SEGUNDA. HORARIO.** El horario pasa de {{ detalle.horario_anterior or "el pactado en el contrato original" }} a **{{ detalle.horario_nuevo or "el que EL EMPLEADOR determine conforme a sus necesidades" }}**.
+{% endif %}
+{% endblock %}

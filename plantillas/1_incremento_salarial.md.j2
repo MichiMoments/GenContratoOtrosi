@@ -1,0 +1,7 @@
+{# REVISIÓN JURÍDICA PENDIENTE — redacción placeholder. #}
+{% extends "base.md.j2" %}
+{% block clausula %}
+**PRIMERA. AJUSTE SALARIAL.** A partir del {{ detalle.fecha_efectividad | fecha_larga }}, la asignación salarial de EL TRABAJADOR se modifica de {{ detalle.salario_anterior.monto | moneda }} ({{ detalle.salario_anterior.nota }}) a {{ detalle.salario_nuevo.monto | moneda }} ({{ detalle.salario_nuevo.nota }}).
+
+**SEGUNDA. PERIODICIDAD DE PAGO.** El salario aquí acordado se pagará con una periodicidad de {{ detalle.periodicidad.valor }} {{ detalle.periodicidad.unidad }}.
+{% endblock %}
