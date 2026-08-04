@@ -135,13 +135,13 @@ def markdown_a_docx(md):
 
 
 def _slug(texto):
-    """'Ana Ruiz Pérez' -> 'ana_ruiz_perez'."""
+    """'David Pérez' -> 'david_perez'."""
     sin_tildes = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "_", sin_tildes.lower()).strip("_")
 
 
 def nombre_archivo(payload):
-    """Nombre del .docx: otrosi_2_ana_ruiz_20260803.docx."""
+    """Nombre del .docx: otrosi_2_david_perez_20260803.docx."""
     generales = payload["generales"]
     fecha = generales["fecha_otrosi"]
     if isinstance(fecha, (datetime, date)):
