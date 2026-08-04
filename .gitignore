@@ -2,3 +2,5 @@
 venv/
 
 documentos/
+
+__pycache__/
