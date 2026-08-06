@@ -1,4 +1,4 @@
-"""Generación determinística del documento de otrosí.
+"""Generación determinística del otrosí de teletrabajo híbrido.
 
 Sin dependencia de Streamlit: recibe el payload y devuelve Markdown o .docx, para
 que un futuro modo masivo pueda reutilizar este módulo tal cual.
@@ -11,24 +11,26 @@ from datetime import date, datetime
 from pathlib import Path
 
 from docx import Document
-from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.shared import Emu, Inches, Pt
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-# PLACEHOLDER — confirmar con RRHH antes de usar en firma.
-EMPLEADOR = {
-    "razon_social": "UNIVERSIDAD DE LOS ANDES",
-    "nit": "[NIT]",
-    "representante": "[NOMBRE DEL REPRESENTANTE LEGAL]",
-    "cargo_representante": "[CARGO DEL REPRESENTANTE]",
-}
+_PLANTILLAS = Path(__file__).parent / "plantillas"
 
-PLANTILLAS = {
-    1: "1_incremento_salarial.md.j2",
-    2: "2_cambio_cargo.md.j2",
-    3: "3_cambio_lugar.md.j2",
-    4: "4_cambio_jornada.md.j2",
-    5: "5_renovacion_contrato.md.j2",
-}
+PLANTILLA = "otrosi_teletrabajo_hibrido.md.j2"
+
+LOGO = _PLANTILLAS / "LogoUninades.png"
+
+TITULO = "OTROSÍ AL CONTRATO DE TRABAJO"
+
+PIE = (
+    "Dirección de Gestión Humana y Desarrollo Organizacional",
+    "Carrera 1 No. 18A-81, Edificio Monjas Bogotá – Colombia. Tels.: [571] 3394949/99 "
+    "Ext.: 3884 - 2243 Línea directa: [571] 3324374",
+    "Universidad de los Andes | Vigilada Mineducación. Reconocimiento como Universidad: "
+    "Decreto 1297 del 30 de mayo de 1964.",
+    "Reconocimiento personería jurídica: Resolución 28 del 23 de febrero de 1949 Minjusticia",
+)
 
 MESES = (
     "enero",
@@ -45,12 +47,29 @@ MESES = (
     "diciembre",
 )
 
+DIAS_TELETRABAJO = {
+    True: "Dos (2) días por semana",
+    False: "Tres (3) días por semana",
+}
 
-def moneda(valor):
-    """1500000 -> $1.500.000 (formato colombiano, sin depender de `locale`)."""
-    if valor is None:
-        return ""
-    return "$" + f"{int(valor):,}".replace(",", ".")
+# El castellano contrae `a`+`el` y `de`+`el`, así que hay que enumerar la frase
+# completa y no solo el sustantivo: "de {el Teletrabajador}" daría "de el".
+CONCORDANCIA = {
+    True: {
+        "identificado": "identificada",
+        "teletrabajador": "la Teletrabajadora",
+        "al_teletrabajador": "a la Teletrabajadora",
+        "del_teletrabajador": "de la Teletrabajadora",
+        "de_la_misma": "de la misma",
+    },
+    False: {
+        "identificado": "identificado",
+        "teletrabajador": "el Teletrabajador",
+        "al_teletrabajador": "al Teletrabajador",
+        "del_teletrabajador": "del Teletrabajador",
+        "de_la_misma": "del mismo",
+    },
+}
 
 
 def fecha_larga(valor):
@@ -60,42 +79,149 @@ def fecha_larga(valor):
     return f"{valor.day} de {MESES[valor.month - 1]} de {valor.year}"
 
 
-def fecha_hora_larga(valor):
-    """datetime -> '3 de agosto de 2026 a las 10:47'."""
-    if valor is None:
+def cedula(valor):
+    """52832252 -> '52.832.252'. Tolera '52.832.252' de una carga masiva."""
+    digitos = re.sub(r"\D", "", str(valor or ""))
+    if not digitos:
         return ""
-    return f"{fecha_larga(valor)} a las {valor:%H:%M}"
+    return f"{int(digitos):,}".replace(",", ".")
+
+
+def mayuscula_inicial(texto):
+    """'la Teletrabajadora' -> 'La Teletrabajadora'."""
+    # `|capitalize` de Jinja no sirve aquí: baja el resto de la cadena a minúsculas.
+    return texto[:1].upper() + texto[1:]
 
 
 _env = Environment(
-    loader=FileSystemLoader(Path(__file__).parent / "plantillas"),
+    loader=FileSystemLoader(_PLANTILLAS),
     undefined=StrictUndefined,
     trim_blocks=True,
     lstrip_blocks=True,
     keep_trailing_newline=True,
 )
-_env.filters["moneda"] = moneda
 _env.filters["fecha_larga"] = fecha_larga
-_env.filters["fecha_hora_larga"] = fecha_hora_larga
+_env.filters["cedula"] = cedula
+_env.filters["mayuscula_inicial"] = mayuscula_inicial
 
 
-def render_markdown(payload):
-    """Renderiza el otrosí como Markdown a partir del payload del formulario."""
-    plantilla = _env.get_template(PLANTILLAS[payload["tipo_id"]])
-    return plantilla.render(
-        empleador=EMPLEADOR,
-        tipo=payload["tipo"],
-        generales=payload["generales"],
-        detalle=payload["detalle"],
+def render_markdown(datos):
+    """Renderiza el otrosí de teletrabajo híbrido como Markdown."""
+    contexto = dict(datos)
+    contexto["dias"] = DIAS_TELETRABAJO[datos["dos_dias"]]
+    contexto.update(CONCORDANCIA[datos["teletrabajadora"]])
+    return _env.get_template(PLANTILLA).render(contexto)
+
+
+def _configurar_estilos(doc):
+    """Calibri 11 con espaciado compacto en el estilo Normal."""
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = Pt(11)
+    # la plantilla base de python-docx trae 10 pt de separación y 1,15 de
+    # interlineado, demasiado suelto para un documento de cuatro páginas
+    normal.paragraph_format.space_after = Pt(6)
+    normal.paragraph_format.line_spacing = 1.0
+
+
+def _configurar_pagina(seccion):
+    """Carta con márgenes de 1"; deja aire para el encabezado y el pie de 4 líneas."""
+    seccion.page_width = Inches(8.5)
+    seccion.page_height = Inches(11)
+    seccion.left_margin = Inches(1)
+    seccion.right_margin = Inches(1)
+    seccion.top_margin = Inches(1.3)
+    seccion.bottom_margin = Inches(1.1)
+    seccion.header_distance = Inches(0.4)
+    seccion.footer_distance = Inches(0.35)
+
+
+def _construir_encabezado(seccion):
+    """Encabezado de todas las páginas: logo a la izquierda y título centrado."""
+    parrafo = seccion.header.paragraphs[0]  # el acceso crea la definición del encabezado
+    parrafo.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    ancho = seccion.page_width - seccion.left_margin - seccion.right_margin
+    # el tabulador del estilo Header viene fijo en 4680 twips: se recalcula para
+    # que siga cayendo en el centro si algún día cambian los márgenes
+    parrafo.paragraph_format.tab_stops.add_tab_stop(
+        Emu(ancho // 2), WD_TAB_ALIGNMENT.CENTER
     )
+    parrafo.add_run().add_picture(str(LOGO), width=Inches(1.2))
+    parrafo.add_run("\t")
+    parrafo.add_run(TITULO).bold = True
+
+
+def _construir_pie(seccion):
+    """Pie de todas las páginas: 4 líneas a 6,5 pt pegadas, la primera en negrita."""
+    pie = seccion.footer
+    parrafos = [pie.paragraphs[0]] + [pie.add_paragraph() for _ in PIE[1:]]
+    for i, (parrafo, texto) in enumerate(zip(parrafos, PIE)):
+        parrafo.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        # las 4 líneas van pegadas: el pie hereda de Normal, que sí separa párrafos
+        parrafo.paragraph_format.space_after = Pt(0)
+        parrafo.paragraph_format.line_spacing = 1.0
+        run = parrafo.add_run(texto)
+        run.font.size = Pt(6.5)
+        run.bold = i == 0
 
 
 _NEGRITA = re.compile(r"\*\*(.+?)\*\*")
+# exige al menos un guion: `|---|---|` es separador de encabezado y se descarta,
+# pero `| | |` es una fila real (el espacio en blanco del bloque de firmas)
+_SEPARADOR_TABLA = re.compile(r"^\|[\s:|-]*-[\s:|-]*\|$")
+_SIN_BORDES = "<!-- tabla-sin-bordes -->"
 
 
-def _escribir_parrafo(doc, texto, estilo=None):
-    """Agrega un párrafo partiendo `**negrita**` en runs separados."""
-    parrafo = doc.add_paragraph(style=estilo)
+def _celdas(linea):
+    """'| a | b |' -> ['a', 'b']."""
+    return [celda.strip() for celda in linea.strip("|").split("|")]
+
+
+def _bloques(md):
+    """Agrupa el Markdown en tuplas (clase, contenido, extra) listas para escribir."""
+    bloques = []
+    parrafo = []
+    filas = []
+    sangria = 0
+    sin_bordes = False
+
+    def cerrar():
+        nonlocal parrafo, filas, sangria, sin_bordes
+        if parrafo:
+            bloques.append(("parrafo", " ".join(parrafo), sangria))
+            parrafo, sangria = [], 0
+        if filas:
+            bloques.append(("tabla", filas, sin_bordes))
+            filas, sin_bordes = [], False
+
+    for cruda in md.splitlines():
+        linea = cruda.strip()
+        if not linea:
+            cerrar()
+        elif linea == _SIN_BORDES:
+            cerrar()
+            sin_bordes = True  # aplica a la siguiente tabla
+        elif linea.startswith("|"):
+            if parrafo:
+                cerrar()  # no reinicia sin_bordes: eso solo pasa al volcar la tabla
+            if not _SEPARADOR_TABLA.match(linea):
+                filas.append(_celdas(linea))
+        elif linea.startswith("- "):
+            cerrar()
+            bloques.append(("vineta", linea[2:], 0))
+        else:
+            if filas:
+                cerrar()
+            if not parrafo:
+                sangria = len(cruda) - len(cruda.lstrip())
+            parrafo.append(linea)
+
+    cerrar()
+    return bloques
+
+
+def _escribir_runs(parrafo, texto):
+    """Vuelca `texto` en `parrafo` partiendo `**negrita**` en runs separados."""
     for i, fragmento in enumerate(_NEGRITA.split(texto)):
         if not fragmento:
             continue
@@ -104,30 +230,64 @@ def _escribir_parrafo(doc, texto, estilo=None):
     return parrafo
 
 
-def markdown_a_docx(md):
-    """Convierte el Markdown de las plantillas a un .docx y devuelve los bytes.
+def _escribir_parrafo(doc, texto, estilo=None, alineacion=WD_ALIGN_PARAGRAPH.JUSTIFY):
+    """Agrega un párrafo justificado con la negrita partida en runs."""
+    # justificar aquí y no en el estilo Normal: el encabezado, el pie y las celdas
+    # heredan de Normal y no deben quedar justificados
+    parrafo = doc.add_paragraph(style=estilo)
+    parrafo.alignment = alineacion
+    return _escribir_runs(parrafo, texto)
 
-    Soporta solo el subconjunto que usan las plantillas: encabezados `#`/`##`,
-    viñetas `- `, negrita `**...**`, y párrafos separados por línea en blanco.
-    Las plantillas deben limitarse a eso.
+
+def _anchos(columnas, sin_bordes):
+    """Reparte las 6,5" útiles: mitades en las firmas, 40/60 en la tabla de datos."""
+    if sin_bordes or columnas != 2:
+        return [Inches(6.5 / columnas)] * columnas
+    return [Inches(2.6), Inches(3.9)]
+
+
+def _escribir_tabla(doc, filas, sin_bordes):
+    """Escribe una tabla; sin estilo hereda Table Normal, que no pinta bordes."""
+    columnas = len(filas[0])
+    tabla = doc.add_table(rows=len(filas), cols=columnas)
+    if not sin_bordes:
+        tabla.style = "Table Grid"
+    tabla.autofit = False
+    anchos = _anchos(columnas, sin_bordes)
+    for columna, ancho in zip(tabla.columns, anchos):
+        columna.width = ancho
+    for fila, textos in zip(tabla.rows, filas):
+        for celda, ancho, texto in zip(fila.cells, anchos, textos):
+            celda.width = ancho  # w:gridCol y w:tcW se fijan por separado
+            _escribir_runs(celda.paragraphs[0], texto)
+    return tabla
+
+
+def markdown_a_docx(md):
+    """Convierte el Markdown de la plantilla a un .docx y devuelve los bytes.
+
+    Soporta solo el subconjunto que usa la plantilla: párrafos (líneas seguidas,
+    separados por línea en blanco), viñetas `- `, negrita `**...**`, tablas
+    `| a | b |` y la directiva `<!-- tabla-sin-bordes -->`. El encabezado y el pie
+    no salen del Markdown: se arman aquí, porque el pie lleva un `|` literal que
+    el lector de tablas confundiría.
     """
     doc = Document()
-    estilo = doc.styles["Normal"]
-    estilo.font.name = "Calibri"
-    estilo.font.size = Pt(11)
+    _configurar_estilos(doc)
+    seccion = doc.sections[0]
+    _configurar_pagina(seccion)
+    _construir_encabezado(seccion)
+    _construir_pie(seccion)
 
-    for linea in md.splitlines():
-        linea = linea.strip()
-        if not linea:
-            continue
-        if linea.startswith("## "):
-            doc.add_heading(linea[3:].strip(), level=2)
-        elif linea.startswith("# "):
-            doc.add_heading(linea[2:].strip(), level=1)
-        elif linea.startswith("- "):
-            _escribir_parrafo(doc, linea[2:].strip(), estilo="List Bullet")
+    for clase, contenido, extra in _bloques(md):
+        if clase == "tabla":
+            _escribir_tabla(doc, contenido, extra)
+        elif clase == "vineta":
+            _escribir_parrafo(doc, contenido, estilo="List Bullet")
         else:
-            _escribir_parrafo(doc, linea)
+            parrafo = _escribir_parrafo(doc, contenido)
+            if extra:  # cada 4 espacios iniciales del bloque valen un cuarto de pulgada
+                parrafo.paragraph_format.left_indent = Inches(0.0625 * extra)
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -140,10 +300,9 @@ def _slug(texto):
     return re.sub(r"[^a-z0-9]+", "_", sin_tildes.lower()).strip("_")
 
 
-def nombre_archivo(payload):
-    """Nombre del .docx: otrosi_2_david_perez_20260803.docx."""
-    generales = payload["generales"]
-    fecha = generales["fecha_otrosi"]
+def nombre_archivo(datos):
+    """Nombre del .docx: otrosi_teletrabajo_david_perez_20260803.docx."""
+    fecha = datos["fecha_firma"]
     if isinstance(fecha, (datetime, date)):
         fecha = f"{fecha:%Y%m%d}"
-    return f"otrosi_{payload['tipo_id']}_{_slug(generales['nombre_empleado'])}_{fecha}.docx"
+    return f"otrosi_teletrabajo_{_slug(datos['nombre'])}_{fecha}.docx"

@@ -1,243 +1,228 @@
-"""Registro de novedades laborales (otrosí) - front-end Streamlit."""
+"""Otrosí de teletrabajo híbrido - front-end Streamlit."""
 
-from datetime import date, datetime
+from datetime import date
 
 import streamlit as st
 
 import documento
 
-OPCIONES = {
-    1: "Incremento/Ajuste salarial",
-    2: "Cambio de cargo o promoción",
-    3: "Cambio de lugar de trabajo",
-    4: "Cambio de jornada",
-    5: "Renovación de contrato",
+# Las etiquetas de las opciones son literalmente el texto que sale en el documento,
+# para que el formulario no pueda desincronizarse de lo que se firma.
+GENERO = {
+    True: "Femenino — «la Teletrabajadora», «identificada»",
+    False: "Masculino — «el Teletrabajador», «identificado»",
 }
 
-CIUDADES = ["Bogotá D.C.", "Medellín", "Cali", "Barranquilla", "Cartagena", "Bucaramanga"]
+DIAS = documento.DIAS_TELETRABAJO
 
+# Atajo para los casos frecuentes; el selectbox acepta cualquier otro municipio.
+CIUDADES_FRECUENTES = [
+    "Bogotá D.C.",
+    "Medellín",
+    "Cali",
+    "Barranquilla",
+    "Cartagena",
+    "Bucaramanga",
+]
 
-def campo_salario(label, key_prefix):
-    monto = st.number_input(f"{label} - Monto", step=1, format="%d", key=f"{key_prefix}_monto")
-    nota = st.text_input(f"{label} - Nota", key=f"{key_prefix}_nota")
-    return {"monto": int(monto), "nota": nota}
+# Única fuente de verdad de las etiquetas: widget, mensaje de error y resumen.
+ETIQUETAS = {
+    "nombre": "Nombre",
+    "documento_identidad": "Documento de identidad",
+    "fecha_ingreso": "Fecha de ingreso",
+    "cargo": "Cargo",
+    "dependencia": "Dependencia",
+    "unidad": "Unidad",
+    "teletrabajadora": "Género en el documento",
+    "fecha_inicio_teletrabajo": "Fecha de inicio del teletrabajo",
+    "dos_dias": "Días de teletrabajo asignados",
+    "direccion": "Dirección del lugar de teletrabajo",
+    "ciudad": "Ciudad o municipio donde teletrabajará",
+    "computador": "Computador",
+    "tipo_computador": "Tipo de computador",
+    "fecha_firma": "Fecha de firma",
+}
 
+# Hoy todos los campos son obligatorios; este es el único lugar donde se decide.
+OBLIGATORIOS = tuple(ETIQUETAS)
 
-def campo_fecha_hora(label, key_prefix):
-    st.write(label)
-    col1, col2 = st.columns(2)
-    with col1:
-        fecha = st.date_input("Fecha", key=f"{key_prefix}_fecha")
-    with col2:
-        hora = st.time_input("Hora", key=f"{key_prefix}_hora")
-    return datetime.combine(fecha, hora)
+FECHA_MINIMA = date(1970, 1, 1)
+FECHA_MAXIMA = date(2100, 12, 31)
+
+MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def campos_faltantes(campos):
     faltantes = []
     for label, valor in campos:
-        if isinstance(valor, list):
-            if not valor:
-                faltantes.append(label)
-        elif isinstance(valor, str):
-            if not valor.strip():
-                faltantes.append(label)
-        elif valor is None:
+        if isinstance(valor, bool):  # isinstance(True, int) es True: esta rama va primero
+            continue
+        if valor is None:
+            faltantes.append(label)
+        elif isinstance(valor, str) and not valor.strip():
+            faltantes.append(label)
+        elif isinstance(valor, int) and valor <= 0:
             faltantes.append(label)
     return faltantes
 
 
-def serializar(valor):
-    if isinstance(valor, (datetime, date)):
-        return valor.isoformat()
-    if isinstance(valor, dict):
-        return {k: serializar(v) for k, v in valor.items()}
-    if isinstance(valor, list):
-        return [serializar(v) for v in valor]
-    return valor
+def render_formulario():
+    """Los 14 campos del otrosí; devuelve el payload plano que consume documento.py."""
+    datos = {}
 
-
-def render_globales():
-    """Campos comunes a todos los tipos de otrosí."""
-    data = {}
-    data["nombre_empleado"] = st.text_input("Nombre del empleado", key="nombre_empleado")
-    data["cedula"] = st.text_input("Cédula del empleado", key="cedula")
-    data["numero_contrato"] = st.text_input("Número de contrato", key="numero_contrato")
-    data["fecha_otrosi"] = campo_fecha_hora("Fecha del otrosí", "otrosi")
-    data["ciudad"] = st.selectbox(
-        "Ciudad",
-        CIUDADES,
+    st.subheader("Datos de la persona teletrabajadora")
+    datos["nombre"] = st.text_input(ETIQUETAS["nombre"], key="nombre")
+    datos["documento_identidad"] = st.number_input(
+        ETIQUETAS["documento_identidad"],
+        min_value=1,
+        value=None,
+        step=1,
+        format="%d",
+        placeholder="Solo números, sin puntos",
+        key="documento_identidad",
+    )
+    datos["fecha_ingreso"] = st.date_input(
+        ETIQUETAS["fecha_ingreso"],
+        value=None,
+        min_value=FECHA_MINIMA,  # sin esto el calendario solo llega a hoy - 10 años
+        max_value=date.today(),
+        format="DD/MM/YYYY",
+        key="fecha_ingreso",
+    )
+    datos["cargo"] = st.text_input(ETIQUETAS["cargo"], key="cargo")
+    datos["dependencia"] = st.text_input(
+        ETIQUETAS["dependencia"],
+        placeholder="la Dirección de Gestión Humana y Desarrollo Organizacional",
+        help="Se imprime tal cual, incluido el artículo: «se desempeña como X en ___ en Y».",
+        key="dependencia",
+    )
+    datos["unidad"] = st.text_input(ETIQUETAS["unidad"], key="unidad")
+    datos["teletrabajadora"] = st.radio(
+        ETIQUETAS["teletrabajadora"],
+        [True, False],
         index=None,
-        placeholder="Selecciona una ciudad",
+        format_func=lambda valor: GENERO[valor],
+        help="Define la concordancia de género en todo el documento.",
+        key="teletrabajadora",
+    )
+
+    st.subheader("Condiciones de teletrabajo")
+    datos["fecha_inicio_teletrabajo"] = st.date_input(
+        ETIQUETAS["fecha_inicio_teletrabajo"],
+        value=None,
+        min_value=FECHA_MINIMA,
+        max_value=FECHA_MAXIMA,
+        format="DD/MM/YYYY",
+        key="fecha_inicio_teletrabajo",
+    )
+    datos["dos_dias"] = st.radio(
+        ETIQUETAS["dos_dias"],
+        [True, False],
+        index=None,
+        format_func=lambda valor: DIAS[valor],
+        key="dos_dias",
+    )
+    datos["direccion"] = st.text_input(ETIQUETAS["direccion"], key="direccion")
+    datos["ciudad"] = st.selectbox(
+        ETIQUETAS["ciudad"],
+        CIUDADES_FRECUENTES,
+        index=None,
+        accept_new_options=True,
+        placeholder="Selecciona o escribe el municipio",
         key="ciudad",
     )
 
-    requeridos = [
-        ("Nombre del empleado", data["nombre_empleado"]),
-        ("Cédula del empleado", data["cedula"]),
-        ("Número de contrato", data["numero_contrato"]),
-        ("Ciudad", data["ciudad"]),
-    ]
-    return data, requeridos
-
-
-def render_incremento_salarial():
-    data = {}
-    data["salario_anterior"] = campo_salario("Salario anterior", "sal_ant")
-    data["salario_nuevo"] = campo_salario("Salario nuevo", "sal_nue")
-
-    st.write("Periodicidad")
-    col1, col2 = st.columns(2)
-    with col1:
-        valor = st.number_input("Valor", step=1, format="%d", key="periodicidad_valor")
-    with col2:
-        unidad = st.selectbox("Unidad", ["días", "meses"], key="periodicidad_unidad")
-    data["periodicidad"] = {"valor": int(valor), "unidad": unidad}
-
-    data["fecha_efectividad"] = campo_fecha_hora("Fecha de efectividad", "efectividad")
-
-    requeridos = [
-        ("Salario anterior - Nota", data["salario_anterior"]["nota"]),
-        ("Salario nuevo - Nota", data["salario_nuevo"]["nota"]),
-    ]
-    return data, requeridos
-
-
-def render_cambio_cargo():
-    data = {}
-    data["cargo_anterior"] = st.text_input("Cargo anterior", key="cargo_anterior")
-    data["cargo_nuevo"] = st.text_input("Cargo nuevo", key="cargo_nuevo")
-    data["area"] = st.selectbox("Área", ["oficina", "casa"], key="area")
-    data["jefe_inmediato"] = st.text_input("Jefe inmediato", key="jefe_inmediato")
-
-    funciones_raw = st.text_area("Funciones nuevas (una por línea)", key="funciones_nuevas")
-    data["funciones_nuevas"] = [f.strip() for f in funciones_raw.splitlines() if f.strip()]
-
-    registrar_salario = st.checkbox("¿Desea registrar salario?", key="registrar_salario")
-    if registrar_salario:
-        data["salario"] = campo_salario("Salario", "cargo_sal")
-    else:
-        data["salario"] = None
-
-    requeridos = [
-        ("Cargo anterior", data["cargo_anterior"]),
-        ("Cargo nuevo", data["cargo_nuevo"]),
-        ("Jefe inmediato", data["jefe_inmediato"]),
-        ("Funciones nuevas", data["funciones_nuevas"]),
-    ]
-    if registrar_salario:
-        requeridos.append(("Salario - Nota", data["salario"]["nota"]))
-
-    return data, requeridos
-
-
-def render_cambio_lugar():
-    data = {}
-    data["lugar_anterior"] = st.text_input("Lugar anterior de trabajo", key="lugar_anterior")
-    data["lugar_nuevo"] = st.text_input("Lugar nuevo de trabajo", key="lugar_nuevo")
-    data["tipo_modalidad"] = st.selectbox(
-        "Tipo de modalidad", ["remoto", "híbrido", "oficina"], key="tipo_modalidad"
+    st.subheader("Equipo asignado")
+    datos["computador"] = st.text_input(ETIQUETAS["computador"], key="computador")
+    datos["tipo_computador"] = st.text_input(
+        ETIQUETAS["tipo_computador"], key="tipo_computador"
     )
 
-    requeridos = [
-        ("Lugar anterior de trabajo", data["lugar_anterior"]),
-        ("Lugar nuevo de trabajo", data["lugar_nuevo"]),
-    ]
-    return data, requeridos
-
-
-def render_cambio_jornada():
-    data = {}
-    data["jornada_anterior_horas"] = int(
-        st.number_input("Jornada anterior (horas)", step=1, format="%d", key="jornada_anterior")
-    )
-    data["jornada_nueva_horas"] = int(
-        st.number_input("Jornada nueva (horas)", step=1, format="%d", key="jornada_nueva")
-    )
-    horario_anterior = st.text_input("Horario anterior (opcional)", key="horario_anterior")
-    horario_nuevo = st.text_input("Horario nuevo (opcional)", key="horario_nuevo")
-    data["horario_anterior"] = horario_anterior or None
-    data["horario_nuevo"] = horario_nuevo or None
-
-    return data, []
-
-
-def render_renovacion_contrato():
-    data = {}
-    data["fecha_vencimiento_actual"] = st.date_input(
-        "Fecha de vencimiento actual", key="fecha_vencimiento"
-    )
-    data["periodo_prueba_dias"] = int(
-        st.number_input("Periodo de prueba (días)", step=1, format="%d", key="periodo_prueba")
+    st.subheader("Firma")
+    datos["fecha_firma"] = st.date_input(
+        ETIQUETAS["fecha_firma"],
+        value=date.today(),
+        min_value=FECHA_MINIMA,
+        max_value=FECHA_MAXIMA,
+        format="DD/MM/YYYY",
+        key="fecha_firma",
     )
 
-    es_termino_fijo = st.checkbox("¿El contrato es a término fijo?", key="termino_fijo")
-    data["termino_fijo"] = es_termino_fijo
-
-    if es_termino_fijo:
-        data["nuevo_plazo_dias"] = int(
-            st.number_input("Nuevo plazo (días)", step=1, format="%d", key="nuevo_plazo")
-        )
-        data["fecha_terminacion"] = st.date_input("Fecha de terminación", key="fecha_terminacion")
-    else:
-        data["nuevo_plazo_dias"] = None
-        data["fecha_terminacion"] = None
-
-    return data, []
+    return datos
 
 
-RENDERERS = {
-    1: render_incremento_salarial,
-    2: render_cambio_cargo,
-    3: render_cambio_lugar,
-    4: render_cambio_jornada,
-    5: render_renovacion_contrato,
-}
+def resumen(datos):
+    """Valores tal como quedarán impresos, para verificarlos antes de descargar."""
+    # usa los mismos filtros que el .docx, así el resumen no puede desincronizarse
+    impreso = {
+        "documento_identidad": f"No. {documento.cedula(datos['documento_identidad'])}",
+        "fecha_ingreso": documento.fecha_larga(datos["fecha_ingreso"]),
+        "fecha_inicio_teletrabajo": documento.fecha_larga(datos["fecha_inicio_teletrabajo"]),
+        "fecha_firma": documento.fecha_larga(datos["fecha_firma"]),
+        "teletrabajadora": GENERO[datos["teletrabajadora"]],
+        "dos_dias": DIAS[datos["dos_dias"]],
+    }
+    return [(ETIQUETAS[clave], impreso.get(clave, datos[clave])) for clave in ETIQUETAS]
+
+
+def mostrar_resultado(resultado):
+    st.divider()
+    st.success("Documento generado.")
+
+    st.subheader("Verifica antes de descargar")
+    st.caption(
+        "Refleja los datos del último «Generar otrosí». Si cambias un campo, "
+        "vuelve a generarlo."
+    )
+    for etiqueta, valor in resumen(resultado["datos"]):
+        st.markdown(f"- **{etiqueta}:** {valor}")
+
+    # on_click="ignore" evita el rerun que antes borraba este bloque al descargar
+    st.download_button(
+        "Descargar .docx",
+        data=resultado["docx"],
+        file_name=resultado["archivo"],
+        mime=MIME_DOCX,
+        on_click="ignore",
+        type="primary",
+    )
+
+    with st.expander("Ver Markdown intermedio (no es el .docx)"):
+        st.caption("No incluye el encabezado, el pie ni el logo: esos los arma documento.py.")
+        st.code(resultado["markdown"], language="markdown")
 
 
 def main():
-    st.set_page_config(page_title="Registro de novedades laborales", page_icon="📄")
-    st.title("Registro de novedades laborales (otrosí)")
+    st.set_page_config(page_title="Otrosí de teletrabajo híbrido", page_icon="📄")
+    st.title("Otrosí de teletrabajo híbrido")
+    st.caption("Universidad de los Andes — Dirección de Gestión Humana y Desarrollo Organizacional")
 
-    st.subheader("Datos generales")
-    globales, req_globales = render_globales()
-    st.divider()
+    # el formulario evita que cada tecleo dispare un rerun, y deja los valores en
+    # pantalla alineados con el documento que se generó
+    with st.form("otrosi_teletrabajo"):
+        datos = render_formulario()
+        enviado = st.form_submit_button("Generar otrosí", type="primary")
 
-    opcion = st.radio(
-        "Tipo de cambio",
-        list(OPCIONES.keys()),
-        format_func=lambda n: f"{n}. {OPCIONES[n]}",
-        key="opcion",
-    )
-
-    st.subheader(OPCIONES[opcion])
-    data, requeridos = RENDERERS[opcion]()
-
-    if st.button("Enviar"):
-        faltantes = campos_faltantes(req_globales + requeridos)
+    if enviado:
+        faltantes = campos_faltantes(
+            [(ETIQUETAS[clave], datos[clave]) for clave in OBLIGATORIOS]
+        )
         if faltantes:
+            # no dejar descargable el documento anterior junto a un error
+            st.session_state.pop("resultado", None)
             st.error("Faltan campos obligatorios: " + ", ".join(faltantes))
         else:
-            payload = {
-                "tipo_id": opcion,
-                "tipo": OPCIONES[opcion],
-                "generales": globales,
-                "detalle": data,
+            md = documento.render_markdown(datos)
+            st.session_state["resultado"] = {
+                "datos": datos,
+                "markdown": md,
+                "docx": documento.markdown_a_docx(md),
+                "archivo": documento.nombre_archivo(datos),
             }
-            md = documento.render_markdown(payload)
 
-            st.success("Documento generado.")
-            st.warning("Texto sujeto a revisión jurídica antes de usarse en firma.")
-            st.markdown(md)
-            st.download_button(
-                "Descargar .docx",
-                data=documento.markdown_a_docx(md),
-                file_name=documento.nombre_archivo(payload),
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            )
-
-            with st.expander("Ver datos capturados (JSON)"):
-                st.json(serializar(payload))
+    resultado = st.session_state.get("resultado")
+    if resultado:
+        mostrar_resultado(resultado)
 
 
 if __name__ == "__main__":
