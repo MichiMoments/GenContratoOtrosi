@@ -1,7 +1,8 @@
-"""Generación determinística del otrosí de teletrabajo híbrido.
+"""Generación determinística de un otrosí a partir de su tipo y del payload.
 
-Sin dependencia de Streamlit: recibe el payload y devuelve Markdown o .docx, para
-que un futuro modo masivo pueda reutilizar este módulo tal cual.
+Sin dependencia de Streamlit ni de ninguna librería de plantillas: el cuerpo del
+tipo se sustituye con una regex contra un diccionario de claves declaradas, así
+que el texto que escriba una persona en la web no puede evaluar nada.
 """
 
 import io
@@ -13,11 +14,8 @@ from pathlib import Path
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.shared import Emu, Inches, Pt
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 _PLANTILLAS = Path(__file__).parent / "plantillas"
-
-PLANTILLA = "otrosi_teletrabajo_hibrido.md.j2"
 
 LOGO = _PLANTILLAS / "LogoUninades.png"
 
@@ -47,10 +45,9 @@ MESES = (
     "diciembre",
 )
 
-DIAS_TELETRABAJO = {
-    True: "Dos (2) días por semana",
-    False: "Tres (3) días por semana",
-}
+# Las dos opciones de un campo de tipo `genero` van aquí, al lado de CONCORDANCIA:
+# son las dos mitades del mismo hecho, y con las mismas claves booleanas.
+GENERO = {True: "Femenino", False: "Masculino"}
 
 # El castellano contrae `a`+`el` y `de`+`el`, así que hay que enumerar la frase
 # completa y no solo el sustantivo: "de {el Teletrabajador}" daría "de el".
@@ -93,24 +90,77 @@ def mayuscula_inicial(texto):
     return texto[:1].upper() + texto[1:]
 
 
-_env = Environment(
-    loader=FileSystemLoader(_PLANTILLAS),
-    undefined=StrictUndefined,
-    trim_blocks=True,
-    lstrip_blocks=True,
-    keep_trailing_newline=True,
-)
-_env.filters["fecha_larga"] = fecha_larga
-_env.filters["cedula"] = cedula
-_env.filters["mayuscula_inicial"] = mayuscula_inicial
+# Lista fija y cerrada. No hay filtros de formato porque el formato lo decide el tipo
+# del campo: {{fecha_ingreso}} imprime «3 de agosto de 2026» por ser de tipo fecha.
+FILTROS = {
+    "mayuscula": mayuscula_inicial,
+    "mayusculas": str.upper,
+    "minusculas": str.lower,
+}
+
+# Cómo se imprime cada tipo de campo; texto y lista salen tal cual.
+FORMATOS = {"cedula": cedula, "fecha": fecha_larga}
+
+# El separador de filtro es «:» y no «|»: el «|» delimita las celdas de tabla del
+# conversor y el bloque de firmas lleva un marcador dentro de una celda.
+MARCADOR = re.compile(r"\{\{\s*([^{}]*?)\s*\}\}")
+
+_SEPARADORES = (":", "|")  # el «|» se tolera por si alguien viene de Jinja
 
 
-def render_markdown(datos):
-    """Renderiza el otrosí de teletrabajo híbrido como Markdown."""
-    contexto = dict(datos)
-    contexto["dias"] = DIAS_TELETRABAJO[datos["dos_dias"]]
-    contexto.update(CONCORDANCIA[datos["teletrabajadora"]])
-    return _env.get_template(PLANTILLA).render(contexto)
+def separar_marcador(interior):
+    """Interior de un {{…}} -> (clave, filtro): 'x : mayuscula' -> ('x', 'mayuscula')."""
+    for separador in _SEPARADORES:
+        if separador in interior:
+            clave, _, filtro = interior.partition(separador)
+            return clave.strip(), filtro.strip()
+    return interior.strip(), ""
+
+
+def contexto(tipo, datos):
+    """Valores ya formateados y listos para sustituir, más la concordancia de género.
+
+    Solo entra lo que el payload trae: una clave ausente tiene que hacer fallar el
+    render, no emitir un hueco en un documento legal.
+    """
+    valores = {}
+    for campo in tipo["campos"]:
+        clave = campo["clave"]
+        if clave not in datos:
+            continue
+        valor = datos[clave]
+        if campo["tipo"] == "genero":
+            if not isinstance(valor, bool):
+                raise ValueError(
+                    f"«{clave}» define la concordancia de género y tiene que ser un booleano, "
+                    f"no {valor!r}"
+                )
+            valores.update(CONCORDANCIA[valor])
+            continue
+        formato = FORMATOS.get(campo["tipo"])
+        valores[clave] = formato(valor) if formato else "" if valor is None else str(valor)
+    return valores
+
+
+def render_markdown(tipo, datos):
+    """Renderiza el cuerpo del tipo como Markdown sustituyendo los marcadores."""
+    valores = contexto(tipo, datos)
+
+    def sustituir(coincidencia):
+        clave, filtro = separar_marcador(coincidencia.group(1))
+        if clave not in valores:
+            # el equivalente de StrictUndefined: sin esto la clave que falte saldría
+            # como un hueco en blanco dentro de un contrato firmado
+            raise ValueError(
+                f"El cuerpo usa «{{{{{clave}}}}}», que no está en los datos. "
+                f"Disponibles: {', '.join(sorted(valores))}"
+            )
+        if filtro and filtro not in FILTROS:
+            raise ValueError(f"El filtro «{filtro}» no existe")
+        valor = valores[clave]
+        return FILTROS[filtro](valor) if filtro else valor
+
+    return MARCADOR.sub(sustituir, tipo["cuerpo"])
 
 
 def _configurar_estilos(doc):
@@ -136,7 +186,7 @@ def _configurar_pagina(seccion):
     seccion.footer_distance = Inches(0.35)
 
 
-def _construir_encabezado(seccion):
+def _construir_encabezado(seccion, titulo):
     """Encabezado de todas las páginas: logo a la izquierda y título centrado."""
     parrafo = seccion.header.paragraphs[0]  # el acceso crea la definición del encabezado
     parrafo.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -148,7 +198,7 @@ def _construir_encabezado(seccion):
     )
     parrafo.add_run().add_picture(str(LOGO), width=Inches(1.2))
     parrafo.add_run("\t")
-    parrafo.add_run(TITULO).bold = True
+    parrafo.add_run(titulo).bold = True
 
 
 def _construir_pie(seccion):
@@ -263,20 +313,21 @@ def _escribir_tabla(doc, filas, sin_bordes):
     return tabla
 
 
-def markdown_a_docx(md):
-    """Convierte el Markdown de la plantilla a un .docx y devuelve los bytes.
+def markdown_a_docx(md, titulo=TITULO):
+    """Convierte el Markdown ya renderizado a un .docx y devuelve los bytes.
 
     Soporta solo el subconjunto que usa la plantilla: párrafos (líneas seguidas,
     separados por línea en blanco), viñetas `- `, negrita `**...**`, tablas
     `| a | b |` y la directiva `<!-- tabla-sin-bordes -->`. El encabezado y el pie
     no salen del Markdown: se arman aquí, porque el pie lleva un `|` literal que
-    el lector de tablas confundiría.
+    el lector de tablas confundiría. Del tipo solo se toma el título: el logo y las
+    cuatro líneas del pie son papelería institucional, iguales en cualquier otrosí.
     """
     doc = Document()
     _configurar_estilos(doc)
     seccion = doc.sections[0]
     _configurar_pagina(seccion)
-    _construir_encabezado(seccion)
+    _construir_encabezado(seccion, titulo)
     _construir_pie(seccion)
 
     for clase, contenido, extra in _bloques(md):
@@ -300,9 +351,18 @@ def _slug(texto):
     return re.sub(r"[^a-z0-9]+", "_", sin_tildes.lower()).strip("_")
 
 
-def nombre_archivo(datos):
-    """Nombre del .docx: otrosi_teletrabajo_david_perez_20260803.docx."""
-    fecha = datos["fecha_firma"]
-    if isinstance(fecha, (datetime, date)):
-        fecha = f"{fecha:%Y%m%d}"
-    return f"otrosi_teletrabajo_{_slug(datos['nombre'])}_{fecha}.docx"
+def nombre_archivo(tipo, datos):
+    """Nombre del .docx: otrosi_teletrabajo_david_perez_20260803.docx.
+
+    Un tipo que no declare campo de nombre o de fecha degrada sin romperse, así que
+    el nombre nunca depende de que el tipo tenga campos concretos.
+    """
+    partes = [tipo.get("prefijo_archivo") or "otrosi"]
+    if clave := tipo.get("campo_nombre"):
+        partes.append(_slug(str(datos.get(clave) or "")))
+    if clave := tipo.get("campo_fecha_archivo"):
+        fecha = datos.get(clave)
+        if isinstance(fecha, (datetime, date)):
+            fecha = f"{fecha:%Y%m%d}"
+        partes.append(str(fecha or ""))
+    return "_".join(parte for parte in partes if parte) + ".docx"

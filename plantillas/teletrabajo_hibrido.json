@@ -1,0 +1,138 @@
+{
+  "id": "teletrabajo_hibrido",
+  "nombre": "Otrosí de teletrabajo híbrido",
+  "titulo": "OTROSÍ AL CONTRATO DE TRABAJO",
+  "prefijo_archivo": "otrosi_teletrabajo",
+  "campo_nombre": "nombre",
+  "campo_fecha_archivo": "fecha_firma",
+  "cuerpo_archivo": "otrosi_teletrabajo_hibrido.md",
+  "campos": [
+    {
+      "clave": "nombre",
+      "etiqueta": "Nombre",
+      "tipo": "texto",
+      "ejemplo": "Ana María Ruiz Vargas",
+      "ancho": 30,
+      "grupo": "Datos de la persona teletrabajadora"
+    },
+    {
+      "clave": "documento_identidad",
+      "etiqueta": "Documento de identidad",
+      "tipo": "cedula",
+      "ejemplo": "1020345678",
+      "ayuda": "Solo números, sin puntos.",
+      "ancho": 16
+    },
+    {
+      "clave": "fecha_ingreso",
+      "etiqueta": "Fecha de ingreso",
+      "tipo": "fecha",
+      "ejemplo": "2023-04-03",
+      "no_futura": true,
+      "ancho": 14
+    },
+    {
+      "clave": "cargo",
+      "etiqueta": "Cargo",
+      "tipo": "texto",
+      "ejemplo": "Analista de Nómina",
+      "ancho": 28
+    },
+    {
+      "clave": "dependencia",
+      "etiqueta": "Dependencia",
+      "tipo": "texto",
+      "ejemplo": "la Dirección de Gestión Humana y Desarrollo Organizacional",
+      "ayuda": "Se imprime tal cual, incluido el artículo: «se desempeña como X en ___ en Y».",
+      "articulo_minuscula": true,
+      "ancho": 36
+    },
+    {
+      "clave": "unidad",
+      "etiqueta": "Unidad",
+      "tipo": "texto",
+      "ejemplo": "Gerencia de Servicios Laborales",
+      "ancho": 26
+    },
+    {
+      "clave": "teletrabajadora",
+      "etiqueta": "Género en el documento",
+      "tipo": "genero",
+      "ejemplo": "Femenino",
+      "ayuda": "Define la concordancia de género en todo el documento.",
+      "ancho": 16
+    },
+    {
+      "clave": "fecha_inicio_teletrabajo",
+      "etiqueta": "Fecha de inicio del teletrabajo",
+      "tipo": "fecha",
+      "ejemplo": "2026-07-01",
+      "posterior_a": "fecha_ingreso",
+      "ancho": 16,
+      "grupo": "Condiciones de teletrabajo"
+    },
+    {
+      "clave": "dias_teletrabajo",
+      "etiqueta": "Días de teletrabajo asignados",
+      "tipo": "lista",
+      "opciones": [
+        "Dos (2) días por semana",
+        "Tres (3) días por semana"
+      ],
+      "sinonimos": {
+        "dos": "Dos (2) días por semana",
+        "2": "Dos (2) días por semana",
+        "tres": "Tres (3) días por semana",
+        "3": "Tres (3) días por semana"
+      },
+      "ejemplo": "Dos (2) días por semana",
+      "ancho": 24
+    },
+    {
+      "clave": "direccion",
+      "etiqueta": "Dirección del lugar de teletrabajo",
+      "tipo": "texto",
+      "ejemplo": "Carrera 7 No. 45-30 Apto 402",
+      "ancho": 36
+    },
+    {
+      "clave": "ciudad",
+      "etiqueta": "Ciudad o municipio donde teletrabajará",
+      "tipo": "texto",
+      "ejemplo": "Bogotá D.C.",
+      "sugerencias": [
+        "Bogotá D.C.",
+        "Medellín",
+        "Cali",
+        "Barranquilla",
+        "Cartagena",
+        "Bucaramanga"
+      ],
+      "ancho": 22
+    },
+    {
+      "clave": "computador",
+      "etiqueta": "Computador",
+      "tipo": "texto",
+      "ejemplo": "Dell Latitude 5440, placa 0012345",
+      "ancho": 24,
+      "grupo": "Equipo asignado"
+    },
+    {
+      "clave": "tipo_computador",
+      "etiqueta": "Tipo de computador",
+      "tipo": "texto",
+      "ejemplo": "Portátil",
+      "ancho": 18
+    },
+    {
+      "clave": "fecha_firma",
+      "etiqueta": "Fecha de firma",
+      "tipo": "fecha",
+      "ejemplo": "2026-08-10",
+      "opcional_en_hoja": true,
+      "ancho": 14,
+      "grupo": "Firma"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+Aquí escribe la app los tipos de otrosí que se crean desde la pestaña «Tipos de
+otrosí». Un archivo .json por tipo, con el cuerpo dentro.
+
+Un .json con el mismo nombre que uno de los tipos integrados de la carpeta de
+arriba lo pisa; borrarlo restaura el original del repositorio.
+
+Estos archivos NO están en .gitignore a propósito: si un tipo creado aquí tiene
+que ser permanente, commitéalo, y así sobrevive a un redespliegue que borre el
+disco del servidor.
