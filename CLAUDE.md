@@ -32,7 +32,9 @@ Two-module split, deliberately:
   converts that Markdown to a `.docx` via `python-docx`.
 
 The payload is flat (not `{generales, detalle}`) because a bulk-mode spreadsheet
-row maps onto it one-to-one — `df.to_dict("records")` needs no mapping layer.
+row maps onto it one-to-one, with no mapping layer in between. Build those dicts
+with explicit per-field coercion rather than handing a dataframe row straight
+over — see the `cedula` note under Known limitations for why.
 `StrictUndefined` in the Jinja env is what makes a missing key fail loudly at
 render time instead of silently emitting a blank field into a legal document.
 
@@ -104,7 +106,8 @@ separator, so a paragraph can span several source lines):
 **Nothing else is supported** — no headings, links, or other Markdown; anything
 else passes through as a literal paragraph. Three traps when editing the
 template: no wrapped line may begin with `- ` or `|`, and no table cell may
-contain a literal `|`.
+contain a literal `|`. That last one applies to the **substituted values** too,
+not just to the template text — see Known limitations.
 
 The page header (logo + title) and the 4-line footer are built in Python by
 `_construir_encabezado` / `_construir_pie`, **not** in the Markdown. Two reasons:
@@ -115,7 +118,8 @@ is what makes both repeat on every page.
 
 `plantillas/LogoUninades.png` is embedded into the header via `add_picture` at
 1.2" wide. python-docx reads PNGs natively — **Pillow is not a dependency**, do
-not add it.
+not add it to `requirements.txt`. (It shows up in the venv anyway, because
+Streamlit pulls it in; that is not a reason to rely on it here.)
 
 ## Known limitations
 
@@ -134,6 +138,27 @@ not add it.
 - **No bulk/mass-generation entry point yet** (CLI, spreadsheet upload). This is
   the stated end goal; only the single-record Streamlit form exists so far. The
   flat payload and the Streamlit-free `documento.py` are the groundwork for it.
+
+The next three are latent today — the form happens to shield each one — but they
+are properties of `documento.py`, which exists precisely to be called *without*
+the form. Any non-UI caller has to guard them itself.
+
+- **A `|` in a field value silently truncates the document.** `direccion`,
+  `ciudad` and friends are substituted into `| a | b |` table rows, so
+  `direccion = "Calle 1 | Apto 2"` renders a three-cell row; `_escribir_tabla`
+  sizes the table from `len(filas[0])` (two columns) and the `zip()` discards the
+  rest — `Apto 2` vanishes with no error. A newline in a value is worse: it ends
+  the table block and splits the table in two. The form does not reject either.
+- **`cedula` mis-renders a float.** `cedula(1020345678.0)` returns
+  `"10.203.456.780"` — `str(float)` keeps the `.0` and the `re.sub(r"\D", …)`
+  swallows the dot, adding a digit. `st.number_input` hands over an `int`, so the
+  form is safe; a spreadsheet reader would not be, since Excel stores every
+  number as a double. Coerce to `int` before building the payload.
+- **`nombre_archivo` can collide.** `_slug` strips accents and lowercases, so
+  "María García" and "Maria Garcia" produce the same filename, and a name with no
+  ASCII-able characters produces an empty slug
+  (`otrosi_teletrabajo__20260806.docx`). Harmless for one browser download at a
+  time; a batch writer must de-duplicate.
 
 ## Running it
 
