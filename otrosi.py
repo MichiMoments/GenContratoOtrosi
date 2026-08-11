@@ -688,7 +688,7 @@ def main():
     st.set_page_config(page_title="Generador de otrosíes", page_icon="📄")
     st.title("Generador de otrosíes")
     st.caption(
-        "Universidad de los Andes — Dirección de Gestión Humana y Desarrollo Organizacional"
+        "Universidad de los Andes — Vicerrectoria de Transformacion Digital"
     )
 
     disponibles = tipos.listar()
