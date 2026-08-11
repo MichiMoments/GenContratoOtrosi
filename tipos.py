@@ -156,9 +156,13 @@ def marcadores(tipo):
 
 
 def nuevo(nombre="Otrosí nuevo"):
-    """Descriptor vacío para empezar a editar en la web."""
-    return _completar({"nombre": nombre}, slug_identificador(nombre) or "otrosi_nuevo",
-                      "nuevo", None)
+    """Descriptor vacío para empezar a editar en la web.
+
+    Con un campo en blanco, no con la lista vacía: sin ninguna fila, st.data_editor recibe
+    una tabla de cero columnas y su botón de agregar fila no tiene sobre qué operar.
+    """
+    return _completar({"nombre": nombre, "campos": [{}]},
+                      slug_identificador(nombre) or "otrosi_nuevo", "nuevo", None)
 
 
 def listar():
