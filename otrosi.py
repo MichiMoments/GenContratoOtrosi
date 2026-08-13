@@ -1,5 +1,6 @@
 """Generador de otrosíes - front-end Streamlit."""
 
+import ast
 import hashlib
 from datetime import date
 
@@ -31,15 +32,16 @@ ORIGENES = {
 }
 
 
-def _etiqueta_genero(valor):
-    """True -> 'Femenino — «la Teletrabajadora», «identificada»'."""
-    # se arma desde CONCORDANCIA para que el formulario no pueda desincronizarse de lo
-    # que dirá el documento firmado
-    concordancia = documento.CONCORDANCIA[valor]
-    return (
-        f"{documento.GENERO[valor]} — «{concordancia['teletrabajador']}», "
-        f"«{concordancia['identificado']}»"
-    )
+def _etiqueta_opcion(campo, opcion):
+    """'Femenino' -> 'Femenino — «la Teletrabajadora»' si el campo trae frases derivadas."""
+    # se arma desde las frases del propio campo, así el formulario no puede
+    # desincronizarse de lo que dirá el documento firmado
+    frases = [
+        por_opcion[opcion]
+        for por_opcion in campo["derivados"].values()
+        if opcion in por_opcion
+    ]
+    return f"{opcion} — «{frases[0]}»" if frases else str(opcion)
 
 
 def _widget(tipo, campo):
@@ -63,15 +65,14 @@ def _widget(tipo, campo):
             max_value=date.today() if campo["no_futura"] else FECHA_MAXIMA,
             format="DD/MM/YYYY", help=ayuda, key=clave,
         )
-    if campo["tipo"] == "genero":
-        return st.radio(
-            etiqueta, [True, False], index=None, format_func=_etiqueta_genero,
-            help=ayuda or "Define la concordancia de género en todo el documento.", key=clave,
-        )
     if opciones := tipos.opciones(campo):
-        if len(opciones) <= TOPE_RADIO:
-            return st.radio(etiqueta, opciones, index=None, help=ayuda, key=clave)
-        return st.selectbox(etiqueta, opciones, index=None, help=ayuda, key=clave)
+        widget = st.radio if len(opciones) <= TOPE_RADIO else st.selectbox
+        return widget(
+            etiqueta, opciones, index=None,
+            # la etiqueta lleva la frase que se va a imprimir, si el campo tiene alguna
+            format_func=lambda opcion: _etiqueta_opcion(campo, opcion),
+            help=ayuda, key=clave,
+        )
     if campo["sugerencias"]:
         return st.selectbox(
             etiqueta, campo["sugerencias"], index=None, accept_new_options=True,
@@ -100,10 +101,10 @@ def resumen(tipo, datos):
     filas = []
     for campo in tipo["campos"]:
         clave, valor = campo["clave"], datos.get(campo["clave"])
-        if campo["tipo"] == "genero":
-            texto = _etiqueta_genero(valor) if isinstance(valor, bool) else ""
-        elif campo["tipo"] == "cedula":
+        if campo["tipo"] == "cedula":
             texto = f"No. {impreso.get(clave, '')}"
+        elif campo["derivados"] and valor is not None:
+            texto = _etiqueta_opcion(campo, valor)
         else:
             texto = impreso.get(clave, "" if valor is None else valor)
         filas.append((campo["etiqueta"], texto))
@@ -344,15 +345,20 @@ def _a_tabla(tipo):
 
 def _de_tabla(filas, anteriores):
     """Las filas del editor de vuelta a campos, conservando lo que la tabla no muestra."""
-    # los sinónimos de una lista no se editan en la tabla: se conservan por clave, para
-    # que editar una etiqueta no borre en silencio las grafías que ya se aceptaban
+    # los sinónimos y las frases derivadas no se editan en esta tabla: se conservan por
+    # clave, para que editar una etiqueta no borre en silencio lo que ya estaba
     previos = {campo["clave"]: campo for campo in anteriores}
+    # y si la clave no aparece pero el número de filas no cambió, se conserva por posición:
+    # eso cubre el renombrado de una clave. Con filas añadidas o borradas no se adivina,
+    # porque asignarle las frases al campo equivocado es peor que perderlas
+    mismo_numero = len(filas) == len(anteriores)
     nuevos = []
-    for fila in filas:
+    for indice, fila in enumerate(filas):
         clave = str(fila.get("Clave") or "").strip()
         if not clave and not str(fila.get("Etiqueta") or "").strip():
             continue  # fila que el editor añadió y quedó vacía
-        campo = dict(previos.get(clave, {}))
+        heredado = previos.get(clave) or (anteriores[indice] if mismo_numero else {})
+        campo = dict(heredado)
         campo.update({
             "clave": clave,
             "etiqueta": str(fila.get("Etiqueta") or "").strip(),
@@ -382,11 +388,14 @@ def _fila_ejemplo(tipo):
     fila = {}
     for campo in tipo["campos"]:
         ejemplo = str(campo["ejemplo"]).strip()
-        if not ejemplo:
-            opciones = tipos.opciones(campo)
+        opciones = tipos.opciones(campo)
+        # un ejemplo que ya no es una de las opciones (porque se renombraron) no puede
+        # tumbar la previsualización: se toma la primera y se sigue
+        if opciones and ejemplo not in opciones:
+            ejemplo = opciones[0]
+        elif not ejemplo:
             ejemplo = (
-                opciones[0] if opciones
-                else date.today().isoformat() if campo["tipo"] == "fecha"
+                date.today().isoformat() if campo["tipo"] == "fecha"
                 else EJEMPLO_POR_TIPO.get(campo["tipo"], "(ejemplo)")
             )
         fila[campo["clave"]] = ejemplo
@@ -424,6 +433,162 @@ def _previsualizar(tipo):
         st.code(md, language="markdown")
 
 
+def _columna_opcion(opcion):
+    """'Femenino' -> 'Si es «Femenino»'.
+
+    El rótulo no es la opción a secas para que no pueda coincidir con «Marcador», que es
+    la otra columna: si coincidiera, las dos irían a la misma clave del dict y la frase
+    se perdería sin decir nada.
+    """
+    return f"Si es «{opcion}»"
+
+
+def _firma_a_opciones(firma):
+    """La firma de vuelta a la lista de opciones; [] si no hay firma o está rota."""
+    try:
+        return list(ast.literal_eval(firma or "[]"))
+    except (ValueError, SyntaxError):
+        return []
+
+
+def _a_filas_derivados(derivados, opciones):
+    """Las frases como filas para el editor: [{'Marcador': 'identificado', …}]."""
+    return [
+        {
+            "Marcador": marcador,
+            **{_columna_opcion(o): str(por_opcion.get(o, "")) for o in opciones},
+        }
+        for marcador, por_opcion in derivados.items()
+    ]
+
+
+def _de_filas_derivados(filas, opciones):
+    """Las filas del editor de vuelta a {marcador: {opción: frase}}."""
+    derivados = {}
+    for fila in filas:
+        marcador = str(fila.get("Marcador") or "").strip()
+        if not marcador:
+            continue  # fila que el editor añadió y quedó vacía
+        derivados[marcador] = {
+            opcion: str(fila.get(_columna_opcion(opcion)) or "").strip()
+            for opcion in opciones
+        }
+    return derivados
+
+
+def _generador_concordancia(campo, opciones, llave_base):
+    """Los dos cuadros del sustantivo y el botón que escribe la concordancia de género."""
+    clave = campo["clave"]
+    izquierda, derecha, boton = st.columns([2, 2, 2])
+    with izquierda:
+        femenino = st.text_input(
+            "Sustantivo en femenino", key=f"tipos_fem_{clave}",
+            placeholder="Teletrabajadora", label_visibility="collapsed",
+        )
+    with derecha:
+        masculino = st.text_input(
+            "Sustantivo en masculino", key=f"tipos_masc_{clave}",
+            placeholder="Teletrabajador", label_visibility="collapsed",
+        )
+    with boton:
+        pulsado = st.button(
+            "Generar y reemplazar", key=f"tipos_gen_{clave}",
+            help="Escribe las frases con el artículo y las contracciones ya resueltas "
+                 "(«de» + «el X» da «del X»). Reemplaza lo que haya en la tabla.",
+        )
+    if not pulsado:
+        return
+    try:
+        nuevos = tipos.generar_concordancia(femenino, masculino, opciones)
+    except ValueError as error:
+        st.error(str(error))
+        return
+    st.session_state[llave_base] = _a_filas_derivados(nuevos, opciones)
+    # la base cambia, así que el delta del editor anterior ya no aplica. La clave del
+    # widget lleva la firma de las opciones dentro, por eso se borran todas las suyas
+    for llave in [k for k in st.session_state.keys() if k.startswith(f"tipos_der_{clave}_")]:
+        st.session_state.pop(llave, None)
+    st.rerun()
+
+
+def _frases_derivadas(campos_borrador):
+    """Una tabla de frases por cada campo con opciones; devuelve los campos actualizados."""
+    elegibles = [campo for campo in campos_borrador if tipos.opciones(campo)]
+    if not elegibles:
+        return campos_borrador
+    # NO va dentro de un st.expander: sin `key` el expander vuelve a su estado inicial en
+    # cada rerun, y editar una celda provoca uno, así que se cerraba en cada tecla
+    st.subheader("Frases derivadas")
+    st.caption(
+        "Una opción puede arrastrar frases que se imprimen en el documento. Es lo que "
+        "resuelve la concordancia de género: eliges «Femenino» y sale «la Teletrabajadora», "
+        "«a la Teletrabajadora»… El **marcador** es lo que escribes entre `{{ }}` en el "
+        "cuerpo."
+    )
+    for campo in elegibles:
+        opciones = tipos.opciones(campo)
+        st.markdown(f"**{campo['etiqueta']}** · {' / '.join(opciones)}")
+        filas = _tabla_derivados(campo, opciones)
+        campo["derivados"] = _de_filas_derivados(filas, opciones)
+        if len(opciones) == 2:
+            _generador_concordancia(campo, opciones, f"tipos_derivados_{campo['clave']}")
+        st.divider()
+    return campos_borrador
+
+
+def _tabla_derivados(campo, opciones):
+    """El editor de frases de un campo, con su base fija y a prueba de cambios de opción."""
+    clave = campo["clave"]
+    llave_base, llave_firma = f"tipos_derivados_{clave}", f"tipos_opciones_{clave}"
+    # los títulos de las columnas llevan el texto de la opción, así que si las opciones
+    # cambian hay que reescribir la base: si no, _de_filas_derivados buscaría columnas que
+    # ya no existen y vaciaría todas las frases sin decir nada
+    firma = repr(opciones)
+    if llave_base not in st.session_state:
+        st.session_state[llave_base] = _a_filas_derivados(campo["derivados"], opciones)
+        st.session_state[llave_firma] = firma
+    elif st.session_state.get(llave_firma) != firma:
+        previas = _firma_a_opciones(st.session_state.get(llave_firma))
+        st.session_state[llave_base] = _remapear_derivados(
+            st.session_state[llave_base], [o for o in previas if o], opciones
+        )
+        st.session_state[llave_firma] = firma
+    # la clave del widget lleva la firma de las opciones: al cambiar las columnas nace un
+    # editor nuevo, y el delta del anterior no se puede aplicar sobre una tabla distinta
+    return st.data_editor(
+        [dict(fila) for fila in st.session_state[llave_base]],  # copia, como arriba
+        num_rows="dynamic", hide_index=True, key=f"tipos_der_{clave}_{firma}",
+        column_config={
+            "Marcador": st.column_config.TextColumn(
+                "Marcador", help="Lo que se escribe entre {{ }}, en minúsculas."
+            ),
+        },
+    )
+
+
+def _remapear_derivados(filas, previas, opciones):
+    """Reescribe las filas cuando cambian las opciones, conservando lo que se pueda.
+
+    Por nombre si la opción sigue existiendo; y si no, por posición cuando el número de
+    opciones no cambió, que es el caso de renombrar una. Con opciones añadidas o
+    quitadas no se adivina: esa columna queda vacía y el revisor la reclama.
+    """
+    misma_cantidad = len(previas) == len(opciones)
+    nuevas = []
+    for fila in filas:
+        remapeada = {"Marcador": fila.get("Marcador", "")}
+        for indice, opcion in enumerate(opciones):
+            if _columna_opcion(opcion) in fila:
+                valor = fila[_columna_opcion(opcion)]
+            elif misma_cantidad:
+                valor = fila.get(_columna_opcion(previas[indice]), "")
+            else:
+                valor = ""
+            remapeada[_columna_opcion(opcion)] = valor
+        nuevas.append(remapeada)
+    return nuevas
+
+
 def _editor(base):
     """El formulario de edición; devuelve un descriptor nuevo, sin tocar la base."""
     borrador = dict(base)
@@ -452,7 +617,9 @@ def _editor(base):
     # guarda las ediciones como un delta contra los datos que recibe, y realimentarle el
     # resultado las aplicaría dos veces
     filas = st.data_editor(
-        st.session_state["tipos_campos_base"],
+        # una copia: el widget no puede mutar la base que le entregamos, o dejaría de ser
+        # la referencia fija contra la que se calcula el delta
+        [dict(fila) for fila in st.session_state["tipos_campos_base"]],
         num_rows="dynamic",
         hide_index=True,
         key="tipos_campos",
@@ -476,6 +643,21 @@ def _editor(base):
         tipos.completar_campo(campo) for campo in _de_tabla(filas, base["campos"])
     ]
 
+    if st.button(
+        "Añadir un campo de género", key="tipos_add_genero",
+        help="Crea el campo con sus dos opciones, sus sinónimos y las cinco frases de "
+             "concordancia ya escritas. Luego puedes cambiarle el sustantivo.",
+    ):
+        # la base nueva parte de los campos YA editados, no de la de apertura: así pulsar
+        # este botón no descarta lo que se llevaba escrito en la tabla
+        ampliados = [*borrador["campos"], tipos.campo_genero()]
+        # hay que mover las dos: la tabla no lleva las frases derivadas, y _de_tabla las
+        # recupera del descriptor base. Actualizar solo una las perdería en el rerun
+        st.session_state["borrador"] = {**base, "campos": ampliados}
+        st.session_state["tipos_campos_base"] = _a_tabla({"campos": ampliados})
+        st.session_state.pop("tipos_campos", None)
+        st.rerun()
+
     claves_texto = [c["clave"] for c in borrador["campos"] if c["tipo"] == "texto"]
     claves_fecha = [c["clave"] for c in borrador["campos"] if c["tipo"] == "fecha"]
     columnas = st.columns(2)
@@ -493,6 +675,8 @@ def _editor(base):
             if borrador["campo_fecha_archivo"] in claves_fecha else 0,
             key="tipos_campo_fecha",
         )
+
+    borrador["campos"] = _frases_derivadas(borrador["campos"])
 
     st.subheader("Cuerpo del otrosí")
     ayuda, texto = st.columns([1, 3])
@@ -561,9 +745,20 @@ def _abrir(borrador):
     st.session_state["tipos_titulo"] = borrador["titulo"]
     st.session_state["tipos_prefijo"] = borrador["prefijo_archivo"]
     st.session_state["tipos_cuerpo"] = borrador["cuerpo"]
+    # el delta del editor anterior no puede sobrevivir a abrir otro tipo; y las bases de
+    # las frases están indexadas por clave de campo, así que dos tipos con un campo del
+    # mismo nombre se pisarían las tablas
+    for llave in list(st.session_state.keys()):
+        if llave.startswith(("tipos_campos", "tipos_der_", "tipos_derivados_",
+                             "tipos_opciones_")):
+            st.session_state.pop(llave, None)
     st.session_state["tipos_campos_base"] = _a_tabla(borrador)
-    # el delta del editor anterior no puede sobrevivir a abrir otro tipo
-    st.session_state.pop("tipos_campos", None)
+    for campo in borrador["campos"]:
+        if opciones := tipos.opciones(campo):
+            st.session_state[f"tipos_derivados_{campo['clave']}"] = _a_filas_derivados(
+                campo["derivados"], opciones
+            )
+            st.session_state[f"tipos_opciones_{campo['clave']}"] = " ".join(opciones)
     st.rerun()
 
 
@@ -637,14 +832,6 @@ def _pestaña_tipos():
         f"Editando **{base['nombre']}** · identificador `{base['id']}`. "
         "Nada se guarda hasta que pulses «Guardar»."
     )
-    st.warning(
-        "Lo guardado vive en el disco del servidor. Si no sabes si ese disco sobrevive a un "
-        "reinicio o a un redespliegue, **exporta el .json y guárdalo tú**: es el único "
-        "respaldo.",
-        icon="⚠️",
-    )
-    # el borrador se recalcula en cada rerun a partir de los widgets; `base` no se toca,
-    # porque es lo que se le entrega al data_editor
     borrador = _editor(base)
     borrador["id"] = borrador["id"] or tipos.slug_identificador(borrador["nombre"])
 
@@ -688,7 +875,7 @@ def main():
     st.set_page_config(page_title="Generador de otrosíes", page_icon="📄")
     st.title("Generador de otrosíes")
     st.caption(
-        "Universidad de los Andes — Vicerrectoria de Transformacion Digital"
+        "Universidad de los Andes, Vicerrectoria de Transformacion Digital"
     )
 
     disponibles = tipos.listar()

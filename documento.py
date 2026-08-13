@@ -45,30 +45,6 @@ MESES = (
     "diciembre",
 )
 
-# Las dos opciones de un campo de tipo `genero` van aquí, al lado de CONCORDANCIA:
-# son las dos mitades del mismo hecho, y con las mismas claves booleanas.
-GENERO = {True: "Femenino", False: "Masculino"}
-
-# El castellano contrae `a`+`el` y `de`+`el`, así que hay que enumerar la frase
-# completa y no solo el sustantivo: "de {el Teletrabajador}" daría "de el".
-CONCORDANCIA = {
-    True: {
-        "identificado": "identificada",
-        "teletrabajador": "la Teletrabajadora",
-        "al_teletrabajador": "a la Teletrabajadora",
-        "del_teletrabajador": "de la Teletrabajadora",
-        "de_la_misma": "de la misma",
-    },
-    False: {
-        "identificado": "identificado",
-        "teletrabajador": "el Teletrabajador",
-        "al_teletrabajador": "al Teletrabajador",
-        "del_teletrabajador": "del Teletrabajador",
-        "de_la_misma": "del mismo",
-    },
-}
-
-
 def fecha_larga(valor):
     """date/datetime -> '3 de agosto de 2026'."""
     if valor is None:
@@ -118,10 +94,11 @@ def separar_marcador(interior):
 
 
 def contexto(tipo, datos):
-    """Valores ya formateados y listos para sustituir, más la concordancia de género.
+    """Valores ya formateados y listos para sustituir, más las frases derivadas.
 
     Solo entra lo que el payload trae: una clave ausente tiene que hacer fallar el
-    render, no emitir un hueco en un documento legal.
+    render, no emitir un hueco en un documento legal. Ese mismo criterio vale para una
+    frase derivada que no cubra la opción elegida — `tipos.validar` lo impide antes.
     """
     valores = {}
     for campo in tipo["campos"]:
@@ -129,16 +106,12 @@ def contexto(tipo, datos):
         if clave not in datos:
             continue
         valor = datos[clave]
-        if campo["tipo"] == "genero":
-            if not isinstance(valor, bool):
-                raise ValueError(
-                    f"«{clave}» define la concordancia de género y tiene que ser un booleano, "
-                    f"no {valor!r}"
-                )
-            valores.update(CONCORDANCIA[valor])
-            continue
         formato = FORMATOS.get(campo["tipo"])
         valores[clave] = formato(valor) if formato else "" if valor is None else str(valor)
+        # este módulo no sabe nada de género: solo que una opción puede arrastrar frases
+        for marcador, por_opcion in campo.get("derivados", {}).items():
+            if valor in por_opcion:
+                valores[marcador] = por_opcion[valor]
     return valores
 
 

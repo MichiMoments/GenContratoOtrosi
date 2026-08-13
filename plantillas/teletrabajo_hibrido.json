@@ -55,9 +55,45 @@
       "ancho": 26
     },
     {
-      "clave": "teletrabajadora",
+      "clave": "genero",
       "etiqueta": "Género en el documento",
-      "tipo": "genero",
+      "tipo": "lista",
+      "opciones": [
+        "Femenino",
+        "Masculino"
+      ],
+      "sinonimos": {
+        "f": "Femenino",
+        "fem": "Femenino",
+        "femenina": "Femenino",
+        "mujer": "Femenino",
+        "m": "Masculino",
+        "masc": "Masculino",
+        "masculina": "Masculino",
+        "hombre": "Masculino"
+      },
+      "derivados": {
+        "teletrabajador": {
+          "Femenino": "la Teletrabajadora",
+          "Masculino": "el Teletrabajador"
+        },
+        "al_teletrabajador": {
+          "Femenino": "a la Teletrabajadora",
+          "Masculino": "al Teletrabajador"
+        },
+        "del_teletrabajador": {
+          "Femenino": "de la Teletrabajadora",
+          "Masculino": "del Teletrabajador"
+        },
+        "identificado": {
+          "Femenino": "identificada",
+          "Masculino": "identificado"
+        },
+        "de_la_misma": {
+          "Femenino": "de la misma",
+          "Masculino": "del mismo"
+        }
+      },
       "ejemplo": "Femenino",
       "ayuda": "Define la concordancia de género en todo el documento.",
       "ancho": 16

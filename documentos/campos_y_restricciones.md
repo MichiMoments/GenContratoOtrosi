@@ -30,7 +30,7 @@ guía se escribe a mano y sí puede, ojo con eso.
 
 ---
 
-## 1. Los seis tipos de campo
+## 1. Los cinco tipos de campo
 
 El tipo de un campo decide **tres cosas a la vez**: el widget del formulario, cómo
 se lee la celda de Excel y **cómo se imprime en el documento**. Por eso al escribir
@@ -43,8 +43,11 @@ el cuerpo no hace falta indicar formatos: `{{fecha_ingreso}}` sale «3 de agosto
 | **Cédula** | Cuadro numérico, solo enteros, mínimo 1 | Celda numérica, o texto de solo dígitos (se admiten `.` `,` `'` `-` y espacios como separadores) | con puntos de mil: `1.020.345.678` |
 | **Número entero** | Igual que la cédula | Igual que la cédula | sin puntos: `1020345678` |
 | **Fecha** | Calendario, del 01/01/1970 al 31/12/2100 | Celda con **formato de fecha**; como texto, solo `AAAA-MM-DD` | en largo: «3 de agosto de 2026» |
-| **Lista** | Botones si hay hasta 4 opciones, desplegable si hay más | Desplegable con las opciones del campo | la opción elegida, tal cual |
-| **Género** | Dos botones: Femenino / Masculino | Desplegable `Femenino` / `Masculino` | **no se imprime solo**: decide la concordancia de todo el documento, ver [§6](#6-el-campo-de-género) |
+| **Lista** | Botones si hay hasta 4 opciones, desplegable si hay más | Desplegable con las opciones del campo | la opción elegida, y además sus **frases derivadas**, ver [§6](#6-frases-derivadas-y-la-concordancia-de-género) |
+
+**No hay un tipo «género».** La concordancia se hace con un campo de **lista** que
+arrastra frases, que es lo que permite que un otrosí diga «el Contratista / la
+Contratista» y otro «el Teletrabajador / la Teletrabajadora».
 
 Antes de validar nada, los campos de **texto** se limpian solos: se unifican los
 espacios raros (incluido el espacio duro que deja copiar de una página web), se
@@ -218,36 +221,72 @@ programa no reescribe texto legal en silencio.
 
 ---
 
-## 6. El campo de género
+## 6. Frases derivadas y la concordancia de género
 
-Un tipo puede tener **un** campo de género, y es el de más impacto de todos: no se
-imprime por sí mismo, sino que decide cinco frases que se pueden usar cuantas veces
-haga falta en el cuerpo.
+Un campo de **lista** puede arrastrar frases: además de imprimir la opción elegida,
+cada opción puede traer textos que salen en otros sitios del documento. Se editan en
+una tabla, en la pestaña «Tipos de otrosí»:
 
-| Marcador | Femenino | Masculino |
+| Marcador | Si es «Femenino» | Si es «Masculino» |
 |---|---|---|
-| `{{identificado}}` | identificada | identificado |
 | `{{teletrabajador}}` | la Teletrabajadora | el Teletrabajador |
 | `{{al_teletrabajador}}` | a la Teletrabajadora | al Teletrabajador |
 | `{{del_teletrabajador}}` | de la Teletrabajadora | del Teletrabajador |
+| `{{identificado}}` | identificada | identificado |
 | `{{de_la_misma}}` | de la misma | del mismo |
 
-Son **frases completas y no solo el sustantivo** porque el castellano contrae
-`a`+`el` y `de`+`el`: «de {el Teletrabajador}» daría «de el». Y son **fijas**: no se
-pueden renombrar ni añadir otras desde la web.
+Para eso sirve: la concordancia de género. En el tipo integrado son **32
+sustituciones** a lo largo del documento. Equivocar el género no produce una errata:
+produce un documento entero mal concordado.
 
-En el tipo integrado esto son **32 sustituciones** a lo largo del documento.
-Equivocar el género no produce una errata: produce un documento entero mal
-concordado.
+### Son frases completas, no solo el sustantivo
 
-En el Excel se escribe con palabras y no con `VERDADERO`/`FALSO` porque quien llena
-la fila debe leer lo que va a salir impreso. Un `VERDADERO` en esa columna se
-rechaza y te remite al desplegable.
+Porque el castellano contrae `a`+`el` y `de`+`el`: «de {el Teletrabajador}» daría
+«de el Teletrabajador». Hay que enumerar la frase entera para cada posición.
+
+Y por eso los nombres los pones tú. Un otrosí de prestación de servicios necesita:
+
+| Marcador | Si es «Femenino» | Si es «Masculino» |
+|---|---|---|
+| `{{contratista}}` | la Contratista | el Contratista |
+| `{{al_contratista}}` | a la Contratista | al Contratista |
+| `{{del_contratista}}` | de la Contratista | del Contratista |
+
+Fíjate en que ahí **el sustantivo no cambia y el artículo sí**. Es el caso que hace
+imposible tener las frases fijas.
+
+### El botón que las escribe por ti
+
+Debajo de la tabla hay dos cuadros —el sustantivo en femenino y en masculino— y el
+botón **«Generar y reemplazar»**. Escribes `Contratista` y `Contratista`, y la app
+rellena las cinco filas con los artículos y las contracciones ya resueltas. También
+hay **«Añadir un campo de género»**, que crea el campo entero de una vez.
+
+> ### Después, las frases son tuyas
+> El botón las escribe bien la primera vez, pero a partir de ahí son datos como
+> cualquier otro. Si las editas, **las contracciones quedan de tu cuenta**: el revisor
+> comprueba que el marcador exista, que cubra todas las opciones y que no lleve `|` ni
+> `**`, pero **no comprueba la gramática**. Si dejas escrito «de el Contratista», eso
+> es lo que va a salir en el contrato.
+
+### Varios roles en el mismo documento
+
+Como los nombres de los marcadores los pones tú, un tipo puede tener **dos o más
+campos de género**: uno para el contratista y otro para el interventor, cada uno con
+sus frases y su propia columna en el Excel. Las dos concordancias salen
+independientes.
+
+### Cómo se escribe en el Excel
+
+Con palabras y no con `VERDADERO`/`FALSO`, porque quien llena la fila debe leer lo
+que va a salir impreso. Un `VERDADERO` en esa columna se rechaza y te remite al
+desplegable.
 
 **Si pegas datos, Excel borra el desplegable.** Por eso al leer se aceptan también
 `F`, `fem`, `femenina`, `mujer`, `M`, `masc`, `masculina` y `hombre`, sin importar
 mayúsculas ni tildes: la plantilla previene, la lectura perdona lo que tiene una
-sola interpretación posible.
+sola interpretación posible. Un campo de lista tuyo puede tener sus propios
+sinónimos.
 
 ---
 
@@ -256,7 +295,7 @@ sola interpretación posible.
 La estrictez vive en tres capas, a propósito:
 
 1. **La plantilla de Excel previene** — formato de fecha en las columnas de fecha,
-   formato de número en las de cédula, desplegables en las de lista y de género.
+   formato de número en las de cédula, desplegables en las de lista.
 2. **La lectura rechaza y nunca adivina** — si un dato admite dos lecturas, se
    devuelve el error en vez de elegir una.
 3. **La vista previa confirma** — muestra los valores ya convertidos a como saldrán
@@ -374,7 +413,7 @@ Los 14 campos, todos obligatorios. `L##` es la línea de
 | Cargo | `cargo` | Texto | 80 | Párrafo de apertura (L8) · bloque de firmas (L171) |
 | Dependencia | `dependencia` | Texto, **artículo minúscula** | 160 | Párrafo de apertura (L9) — **abre el renglón** |
 | Unidad | `unidad` | Texto | 100 | Párrafo de apertura, a mitad de renglón (L9) |
-| Género en el documento | `teletrabajadora` | Género | — | No se imprime: decide **32** concordancias |
+| Género en el documento | `genero` | Lista, con 5 frases derivadas | — | La opción no se imprime: sus frases deciden **32** concordancias |
 | Fecha de inicio del teletrabajo | `fecha_inicio_teletrabajo` | Fecha, **posterior a** la de ingreso | — | Cláusula primera (L19) |
 | Días de teletrabajo asignados | `dias_teletrabajo` | Lista | — | Tabla de condiciones (L24) |
 | Dirección del lugar de teletrabajo | `direccion` | Texto | 120 | Tabla de condiciones (L25) |
@@ -453,8 +492,13 @@ letra utilizable, se usa el número de la fila.
 | «lleva un «\|» en medio de un párrafo» | Ese carácter solo vale para tablas. Quítalo. |
 | «número impar de «**»» | Falta cerrar una negrita. |
 | «no aparece en el cuerpo» (aviso) | Ese campo se va a pedir pero no se imprime. Ponlo en el cuerpo o quítalo. |
-| «La clave … está reservada» | Es uno de los cinco marcadores de género. Ponle otro nombre al campo. |
 | «necesita al menos dos opciones» | Un campo de lista con una sola opción no es una elección. |
+| «tiene opciones repetidas» | Dos opciones iguales no se pueden distinguir. Deja una sola. |
+| «El nombre … está usado dos veces» | Una frase derivada se llama igual que un campo o que otra frase. En el documento un marcador solo puede venir de un sitio: cámbiale el nombre a uno. |
+| «no dice qué imprimir cuando la opción es …» | A esa frase le falta el texto de alguna opción. Si alguien la elige, el documento no se genera. |
+| «no sirve como marcador» | El nombre de la frase lleva mayúsculas, tildes o espacios. Solo minúsculas sin tildes, números y guion bajo. |
+| «tiene frases derivadas pero no tiene opciones» | Las frases dependen de la opción elegida: el campo tiene que ser de tipo lista. |
+| «La frase … no se usa en el cuerpo» (aviso) | Escribe `{{esa_frase}}` donde deba salir, o bórrala de la tabla. |
 | «Alguien más guardó este tipo mientras lo editabas» | Otra persona guardó después de que tú lo abriste. Exporta tu versión, vuelve a abrir el tipo y aplica los cambios sobre la nueva. |
 
 ---
@@ -472,8 +516,10 @@ salidas erróneas del formateador de cédula (`1020345678.0` → `10.203.456.780
 `'1.02E+09'` → `10.209`, `-5` → `5`, `0` → vacío); las 32 sustituciones de
 concordancia; el avance de Calibri 11 pt de 4,65 pt por carácter (4,74 en negrita),
 con dispersión de 4,53 a 4,76; los 42 ms y ~44 KB por documento; que las líneas de
-la plantilla donde cae cada campo son las de la tabla del §9; y que cada regla del
-revisor de tipos dispara con su caso.
+la plantilla donde cae cada campo son las de la tabla del §9; que cada regla del
+revisor de tipos dispara con su caso; que el generador de concordancia reproduce
+frase por frase las cinco que antes estaban en el código; y que «el Contratista / la
+Contratista» y dos roles con género en un mismo documento salen bien impresos.
 
 **Estimado — trátalo como tal:**
 
@@ -495,5 +541,8 @@ revisor de tipos dispara con su caso.
 - **Que las fechas sean coherentes entre sí** más allá de las dos banderas.
 - **Que el cuerpo de un tipo diga algo jurídicamente correcto.** El revisor
   comprueba la estructura del documento, no el contenido legal.
+- **La gramática de las frases derivadas.** El botón las escribe bien, pero si las
+  editas nadie comprueba que «de» + «el X» quedara como «del X». Ver el recuadro del
+  [§6](#6-frases-derivadas-y-la-concordancia-de-género).
 - **Quién editó un tipo y cuándo.** La app no tiene inicio de sesión: cualquiera con
   el enlace puede cambiar el texto de un otrosí y no queda rastro de autoría.

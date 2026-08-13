@@ -3,14 +3,13 @@
 Sin dependencia de Streamlit: el formulario y la carga masiva validan con las
 mismas reglas y las mismas etiquetas. Las etiquetas y los tipos ya no viven aquí
 sino en el descriptor del tipo (`tipos.py`); lo que se queda es todo lo que
-depende del *tipo de dato* y no del otrosí concreto.
+depende del *tipo de dato* y no del otrosí concreto. Desde que la concordancia de
+género es un dato del tipo, este módulo no depende de nada del proyecto.
 """
 
 import re
 import unicodedata
 from datetime import date, datetime
-
-import documento
 
 FECHA_MINIMA = date(1970, 1, 1)
 FECHA_MAXIMA = date(2100, 12, 31)
@@ -23,18 +22,6 @@ PROHIBIDOS = ("|", "**")
 # Un valor que abra una línea del cuerpo la convierte en tabla o en viñeta, y con un cuerpo
 # que escribe cualquiera ya no hay un solo campo que pueda caer ahí: aplica a todos.
 INICIALES_PROHIBIDAS = ("|", "- ")
-
-_FEMENINO, _MASCULINO = documento.GENERO[True], documento.GENERO[False]
-
-# Pegar en Excel borra la validación de la celda, así que al leer se aceptan también las
-# grafías que se teclean a mano, no solo los dos textos del desplegable.
-GENERO_SINONIMOS = {
-    "f": _FEMENINO, "fem": _FEMENINO, "femenina": _FEMENINO, "mujer": _FEMENINO,
-    "m": _MASCULINO, "masc": _MASCULINO, "masculina": _MASCULINO, "hombre": _MASCULINO,
-}
-
-# El payload guarda un booleano porque CONCORDANCIA está indexada así.
-GENERO_BOOL = {_FEMENINO: True, _MASCULINO: False}
 
 # `strip()` se lleva el NBSP de los extremos, pero el espacio de ancho cero y la marca de
 # orden de bytes no son espacios para Python y sobreviven a NFKC.
@@ -56,8 +43,6 @@ def faltantes(tipo, datos):
         if not campo["obligatorio"]:
             continue
         valor = datos.get(campo["clave"])
-        if isinstance(valor, bool):  # isinstance(True, int) es True: esta rama va primero
-            continue
         if valor is None:
             faltan.append(campo["clave"])
         elif isinstance(valor, str) and not valor.strip():
@@ -167,8 +152,6 @@ def _convertir(campo, cruda):
         return _fecha(cruda)
     if campo["tipo"] == "lista":
         return _opcion(cruda, campo["opciones"], campo["sinonimos"])
-    if campo["tipo"] == "genero":
-        return GENERO_BOOL[_opcion(cruda, list(documento.GENERO.values()), GENERO_SINONIMOS)]
     return _texto(cruda)
 
 

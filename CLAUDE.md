@@ -28,10 +28,13 @@ only in the UI layer.** Acyclic, no inverted dependencies:
 ```
 otrosi.py     Streamlit UI (three tabs)      -> tipos, campos, masivo, documento
 masivo.py     Excel <-> payloads + .zip      -> tipos, campos, documento
-campos.py     coercion + validation          -> documento
 tipos.py      type descriptors on disk       -> documento
 documento.py  marcadores -> Markdown -> docx -> (nothing)
+campos.py     coercion + validation          -> (nothing)
 ```
+
+`campos.py` stopped importing `documento` when gender agreement became type data —
+it now depends only on the standard library.
 
 - [otrosi.py](otrosi.py) — Streamlit only. A type selector **above** `st.tabs`, then
   three tabs. `render_formulario(tipo)` dispatches on each field's type and returns a
@@ -99,7 +102,7 @@ gitignored: committing one makes a web-created type survive a redeploy.
 `_origen` and `_marca` (the mtime at load, used to detect a lost write) are internal;
 `_serializar` strips every `_`-prefixed key.
 
-### The six field types
+### The five field types
 
 The field type decides **three things at once**: the form widget, how the Excel cell
 is coerced, and **how the value prints**. That is why the template language needs no
@@ -111,13 +114,16 @@ formatting filters.
 | `cedula` | `int` | `1.020.345.678` | `number_input` | `#,##0` |
 | `entero` | `int` | plain digits | `number_input` | `#,##0` |
 | `fecha` | `date` | `3 de agosto de 2026` | `date_input` | `DD/MM/YYYY` |
-| `lista` | `str` (the chosen option) | verbatim | `radio` ≤4 options, else `selectbox` | dropdown |
-| `genero` | `bool` | nothing on its own: **injects the 5 concordance phrases** | `radio` over `[True, False]` | dropdown |
+| `lista` | `str` (the chosen option) | verbatim, **plus its `derivados`** | `radio` ≤4 options, else `selectbox` | dropdown |
+
+There is deliberately **no `genero` type** — see «Frases derivadas» below. That was a
+special case that froze the telework vocabulary into `documento.py`; it is now data.
 
 Per-field flags carry what used to be hard-coded rules, with nothing lost:
 `no_futura` (error), `posterior_a` (aviso), `articulo_minuscula` (aviso),
 `opcional_en_hoja` (the batch date fills it; in the form it defaults to today),
-`grupo` (the form's `st.subheader` groupings), `sugerencias`, `sinonimos`, `ancho`.
+`grupo` (the form's `st.subheader` groupings), `sugerencias`, `sinonimos`, `ancho`,
+`derivados`.
 
 `INICIALES_PROHIBIDAS` applies to **every** text field: with a body anyone can write,
 there is no longer a single field that can open a rendered line.
@@ -137,11 +143,11 @@ fails to render.
   dialect and the signature block has a marker *inside* a cell
   (`| LA UNIVERSIDAD, | {{teletrabajador:mayusculas}}, |`). `|` is still tolerated on
   read for anyone coming from Jinja.
-- **A key that is not a declared field or a concordance name raises at render time.**
-  That is what replaced `StrictUndefined`, and it is why `documento.contexto` only
-  puts keys that are actually *in* `datos` into the context: a missing key must fail
-  loudly instead of emitting a blank into a legal document.
-- A `genero` field's own key is **not** a valid marker — its value is a bool.
+- **A key that is not a declared field or one of its `derivados` raises at render
+  time.** That is what replaced `StrictUndefined`, and it is why `documento.contexto`
+  only puts keys that are actually *in* `datos` into the context: a missing key must
+  fail loudly instead of emitting a blank into a legal document. Same for a derived
+  phrase that does not cover the chosen option — `tipos.validar` rejects that at save.
 - `{%` and `{#` are an explicit error ("this editor does not use Jinja").
 
 **Jinja2 is gone from `requirements.txt`.** Because a person's text never reaches an
@@ -149,24 +155,45 @@ expression evaluator, the whole class of template injection (`{{ ''.__class__ }}
 code execution) does not exist: substitution is a `re.sub` against a dict of declared
 keys. Safe by construction, not by sandbox.
 
-### Gender agreement
+### Frases derivadas — how gender agreement works
 
-Fixed by decision — a `genero` field always injects exactly these five, and they
-cannot be renamed or extended from the web. `CONCORDANCIA` enumerates **whole
-phrases**, not just the noun, because Spanish contracts `a`+`el` → `al` and
-`de`+`el` → `del`: inserting `"el Teletrabajador"` after `de` would produce `de el`.
+A `lista` field can carry `derivados`: `{marcador: {opción: frase}}`. Choosing an
+option puts **both** the option under the field's key and every derived phrase under
+its own marker name. `documento.contexto` does that for any list field; the renderer
+knows nothing about gender.
 
-| Key | Feminine | Masculine |
-|---|---|---|
-| `identificado` | identificada | identificado |
-| `teletrabajador` | la Teletrabajadora | el Teletrabajador |
-| `al_teletrabajador` | a la Teletrabajadora | al Teletrabajador |
-| `del_teletrabajador` | de la Teletrabajadora | del Teletrabajador |
-| `de_la_misma` | de la misma | del mismo |
+```json
+"derivados": {
+  "teletrabajador":  {"Femenino": "la Teletrabajadora",   "Masculino": "el Teletrabajador"},
+  "al_teletrabajador": {"Femenino": "a la Teletrabajadora", "Masculino": "al Teletrabajador"}
+}
+```
 
-`documento.GENERO` (the two option texts) lives next to `CONCORDANCIA` because they
-are two halves of the same fact, keyed by the same bool. `campos.GENERO_SINONIMOS`
-and `GENERO_BOOL` derive from it.
+**Why whole phrases and not just the noun:** Spanish contracts `a`+`el` → `al` and
+`de`+`el` → `del`, so `de {{el Teletrabajador}}` would render «de el». And the
+motivating counter-example is «el Contratista / la Contratista», where **the article
+is what changes and the noun does not** — impossible to express while the phrases were
+frozen in Python.
+
+`tipos.generar_concordancia(femenino, masculino, opciones)` writes the five usual
+phrases with the contractions already resolved, named from the masculine noun's slug
+(`contratista`, `al_contratista`, `del_contratista`, plus `identificado` and
+`de_la_misma` from `CONCORDANCIA_SUELTA`, which do not depend on the noun). The editor
+exposes it as one button. **After that they are plain data**: the checker verifies
+structure — that the marker exists, covers every option, and carries no `|`/`**` — and
+**not grammar**. Nothing stops someone leaving «de el Contratista» in the table.
+
+Two consequences worth knowing:
+
+- **A type can have several gendered roles** (`el Contratista` and `la Interventora`
+  in one document), because the marker names come from the type, not from the code.
+  The old "only one `genero` field" rule is gone.
+- **A list field's own key is a valid marker** and prints the chosen option
+  («Femenino»). Useless in a contract but harmless, and forbidding it would
+  reintroduce the special case this design removed.
+
+`tipos.OPCIONES_GENERO` and `SINONIMOS_GENERO` are the preset content for
+`campo_genero()`; they live in `tipos.py` because they are descriptor data.
 
 ## The Markdown subset (`documento.markdown_a_docx`)
 
@@ -209,14 +236,21 @@ non-table line · a table row whose cell count differs from the block's first ro
 (`_escribir_tabla` sizes from `len(filas[0])` and the `zip()` **drops the rest with no
 error**) · a paragraph continuation line starting with `- ` or `|` · an odd number of
 `**` in a block (`_escribir_runs` splits on parity) · empty body · no fields ·
-invalid/duplicate/reserved key · duplicate label (`_mapa_columnas` would reject the
-Excel) · a `lista` with fewer than two options · more than one `genero` · an option
-containing `|`/`**` · an `id` outside `^[a-z0-9_]{1,60}$` (it becomes a path) ·
+invalid/duplicate key · duplicate label (`_mapa_columnas` would reject the Excel) · a
+`lista` with fewer than two options or with repeated ones · an option containing
+`|`/`**` · an `id` outside `^[a-z0-9_]{1,60}$` (it becomes a path) ·
 `campo_nombre`/`campo_fecha_archivo` pointing at a missing or wrong-typed field.
 
-Avisos: a declared field that never appears in the body · a marker that opens a line ·
-unsupported Markdown (`#`, `>`, ```` ``` ````, links, single-`*` italics) · a
-`<!-- tabla-sin-bordes -->` with no table after it.
+On `derivados` specifically: a marker name that is not a valid identifier · a name used
+twice, whether by another field's key or by another field's phrase (**the render context
+is flat**, so one would silently shadow the other) · a phrase that does not cover every
+option of its field (whoever picks it gets no marker and the document fails) · phrases
+on a field with no options · a `|`/`**` inside a phrase.
+
+Avisos: a declared field whose key and phrases never appear in the body · a declared
+phrase that is not used · a marker that opens a line · unsupported Markdown (`#`, `>`,
+```` ``` ````, links, single-`*` italics) · a `<!-- tabla-sin-bordes -->` with no table
+after it.
 
 **Ordered lists are deliberately not flagged.** `1. ` prints literally, which is
 exactly what the built-in template wants for `1. Computador:`, and warning about it
@@ -269,10 +303,34 @@ Non-obvious things that are load-bearing:
   `_editor` returns a *new* dict each rerun without touching it. That matters:
   `st.data_editor` with a `key` stores edits as a delta against the data it receives,
   so feeding it the already-edited table would apply them twice. It is handed
-  `st.session_state["tipos_campos_base"]`, set once by `_abrir`.
-- `_de_tabla` preserves per-field keys the table does not show (notably `sinonimos`)
-  by matching on `clave`, so renaming a label does not silently drop the spellings
-  that were already accepted.
+  `st.session_state["tipos_campos_base"]`, set once by `_abrir`, and always as a
+  **copy** so the widget cannot mutate the reference the delta is measured against.
+- Each list field gets its own phrases table, based on
+  `st.session_state["tipos_derivados_<clave>"]`. `_abrir` purges every `tipos_der*` key
+  before seeding: those are indexed by field key, so two types sharing a field name
+  would otherwise inherit each other's phrases.
+- **The phrases table must not live inside an `st.expander`.** Without a `key` an
+  expander is not stateful (`is_stateful = on_change != "ignore"` in
+  `elements/layouts.py`) and `current_expanded` resets to the `expanded` argument on
+  every rerun — and editing one cell *is* a rerun, so it closed on every keystroke. The
+  label also takes part in the element id, and a dynamic label makes it worse.
+- **The phrases widget key carries `repr(opciones)`**, because the option text is in the
+  column headers (`Si es «X»`). Change an option and the columns are named differently:
+  a stale delta would be applied to columns that no longer exist and every phrase would
+  blank out silently. A new signature means a new widget, and `_remapear_derivados`
+  rewrites the baseline (by name, else by position when the option count is unchanged).
+- `_fila_ejemplo` falls back to the first option when a field's `ejemplo` is no longer
+  one of them — renaming an option must not break the preview.
+- **Anything that changes the field list has to move both** `st.session_state["borrador"]`
+  and `tipos_campos_base` (see the «Añadir un campo de género» button). The table carries
+  no `derivados`, and `_de_tabla` recovers them from the baseline descriptor — updating
+  only one of the two drops the phrases on the next rerun. That was a real bug.
+- `_de_tabla` preserves per-field keys the table does not show (`sinonimos`,
+  `derivados`) by matching on `clave`; and if the key is not found but the row count did
+  not change, by position, which covers renaming a key. With rows added or deleted it
+  does **not** guess: attaching phrases to the wrong field is worse than losing them.
+- `tipos.nuevo()` starts with **one blank field**, not an empty list: with no rows,
+  `st.data_editor` gets a zero-column table and its add-row button has nothing to act on.
 - Widget keys in the form are namespaced `campo_{tipo_id}_{clave}` — two types sharing
   a field name would otherwise collide in `DuplicateWidgetID`.
 - Changing the type selector pops `resultado` and `masivo` from session state, for the
@@ -298,6 +356,11 @@ Non-obvious things that are load-bearing:
 - **Anyone pasting a contract from Word will hit the Markdown subset** — headings,
   numbered lists and italics print literally. The checker and the preview make that
   *visible*, which is all that is possible without widening the converter.
+- **Grammar in `derivados` is nobody's job.** `generar_concordancia` gets the
+  contractions right when it writes them, but the phrases are then editable data and
+  `tipos.validar` only checks structure. Someone can leave «de el Contratista» in the
+  table and the checker will approve it. That is the direct cost of taking the phrases
+  out of the code, and it is stated on screen and in the guide.
 - **The logo prints soft.** `LogoUninades.png` is 141×66 px; at 1.2" that is ~118 dpi
   against ~300 dpi for crisp print. Fix by dropping a higher-resolution file at the
   same path — no code change needed.
@@ -395,10 +458,11 @@ did not change.
 - One-line docstrings with an `input -> output` example on helpers; `_`-prefixed
   privates.
 - Comments are rare and used only for non-obvious caveats (the `isinstance(True, int)`
-  ordering in `campos.faltantes`, why justification is per-paragraph rather than on the
-  `Normal` style, why the header tab stop is recomputed, why the Excel dropdowns point
-  at a range instead of an inline list, why the filter separator is `:`, why
-  `data_editor` is handed a fixed baseline). Match that density.
+  ordering inside `campos._texto` and friends, why justification is per-paragraph rather
+  than on the `Normal` style, why the header tab stop is recomputed, why the Excel
+  dropdowns point at a range instead of an inline list, why the filter separator is `:`,
+  why `data_editor` is handed a fixed baseline, why the phrases table labels its columns
+  `Si es «X»`). Match that density.
 - **`campos._INVISIBLES` must keep its `\uXXXX` escapes.** Writing those characters
   literally is invisible in a diff and un-editable; it has already regressed twice.
 - Spanish identifiers include the accented ones: `_pestaña_individual`,

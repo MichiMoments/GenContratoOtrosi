@@ -14,7 +14,7 @@ import documento
 DIRECTORIO = Path(__file__).parent / "plantillas"
 PERSONALIZADAS = DIRECTORIO / "personalizadas"
 
-TIPOS_CAMPO = ("texto", "cedula", "entero", "fecha", "lista", "genero")
+TIPOS_CAMPO = ("texto", "cedula", "entero", "fecha", "lista")
 
 NOMBRE_TIPO_CAMPO = {
     "texto": "Texto",
@@ -22,23 +22,35 @@ NOMBRE_TIPO_CAMPO = {
     "entero": "Número entero",
     "fecha": "Fecha",
     "lista": "Lista",
-    "genero": "Género",
 }
 
-# Un campo `genero` no se imprime por su clave: aporta estas cinco frases, y por eso
-# ninguna puede usarse como clave de campo. La decisión fue que sean fijas.
-CLAVES_CONCORDANCIA = tuple(documento.CONCORDANCIA[True])
+# La concordancia de género es un campo `lista` con frases derivadas, no un tipo aparte:
+# así el sustantivo del rol es un dato y «el Contratista / la Contratista» se puede
+# expresar igual que «el Teletrabajador / la Teletrabajadora».
+OPCIONES_GENERO = ("Femenino", "Masculino")
 
-_GENERO_OPCIONES = tuple(documento.GENERO.values())
+# Pegar en Excel borra la validación de la celda, así que al leer se aceptan también las
+# grafías que se teclean a mano, no solo los dos textos del desplegable.
+SINONIMOS_GENERO = {
+    "f": "Femenino", "fem": "Femenino", "femenina": "Femenino", "mujer": "Femenino",
+    "m": "Masculino", "masc": "Masculino", "masculina": "Masculino", "hombre": "Masculino",
+}
+
+# Frases que concuerdan con la persona pero no dependen del sustantivo del rol.
+CONCORDANCIA_SUELTA = {
+    "identificado": ("identificada", "identificado"),
+    "de_la_misma": ("de la misma", "del mismo"),
+}
 
 # Todo menos clave, etiqueta y tipo tiene valor por defecto: un .json escrito a mano
-# no necesita las trece claves, y el editor solo expone lo que de verdad se cambia.
+# no necesita las catorce claves, y el editor solo expone lo que de verdad se cambia.
 DEFECTOS_CAMPO = {
     "obligatorio": True,
     "ejemplo": "",
     "ayuda": "",
     "grupo": "",  # subtítulo bajo el que se agrupa el campo en el formulario
     "opciones": [],
+    "derivados": {},  # marcador -> {opción: frase}; ver generar_concordancia
     "sinonimos": {},
     "sugerencias": [],
     "no_futura": False,
@@ -113,8 +125,20 @@ def completar_campo(bruto):
     campo["clave"] = str(bruto.get("clave", "")).strip()
     campo["etiqueta"] = str(bruto.get("etiqueta", "")).strip() or campo["clave"]
     campo["tipo"] = str(bruto.get("tipo", "texto")).strip()
-    if campo["tipo"] == "genero" and not campo["opciones"]:
-        campo["opciones"] = list(_GENERO_OPCIONES)
+    campo["derivados"] = {
+        str(marcador).strip(): dict(por_opcion)
+        for marcador, por_opcion in (campo.get("derivados") or {}).items()
+    }
+    # Compatibilidad: los .json guardados cuando el género era un tipo de campo traen
+    # «genero» y ninguna opción. Se convierten al leer, con los mismos cinco marcadores
+    # que inyectaba el código, para que un tipo creado antes siga renderizando igual.
+    if campo["tipo"] == "genero":
+        campo["tipo"] = "lista"
+        campo["opciones"] = campo["opciones"] or list(OPCIONES_GENERO)
+        campo["sinonimos"] = campo["sinonimos"] or dict(SINONIMOS_GENERO)
+        campo["derivados"] = campo["derivados"] or generar_concordancia(
+            "Teletrabajadora", "Teletrabajador", campo["opciones"]
+        )
     if not campo["ancho"]:
         campo["ancho"] = max(ANCHO_MINIMO, min(ANCHO_MAXIMO, len(campo["etiqueta"]) + 4))
     return campo
@@ -130,9 +154,7 @@ def _copia(valor):
 
 
 def opciones(campo):
-    """Textos válidos de un campo de elección: [] si no es lista ni género."""
-    if campo["tipo"] == "genero":
-        return list(_GENERO_OPCIONES)  # fijas, igual que la concordancia
+    """Textos válidos de un campo de elección: [] si no es de lista."""
     return list(campo.get("opciones") or [])
 
 
@@ -147,12 +169,54 @@ def etiquetas(tipo):
 
 
 def marcadores(tipo):
-    """Claves que se pueden escribir en el cuerpo: los campos, más la concordancia."""
-    validos = [campo["clave"] for campo in tipo["campos"] if campo["tipo"] != "genero"]
-    # la clave de un campo `genero` no se imprime: su valor es un booleano
-    if any(campo["tipo"] == "genero" for campo in tipo["campos"]):
-        validos.extend(CLAVES_CONCORDANCIA)
+    """Claves que se pueden escribir en el cuerpo: los campos y sus frases derivadas."""
+    validos = []
+    for campo in tipo["campos"]:
+        validos.append(campo["clave"])
+        validos.extend(campo["derivados"])
     return validos
+
+
+def generar_concordancia(femenino, masculino, opciones_campo):
+    """('Contratista', 'Contratista', ['Femenino', 'Masculino']) -> los cinco derivados.
+
+    Las contracciones las escribe el código y no una persona, así que en el momento de
+    crearlas no pueden salir mal: «de» + «el Contratista» da «del Contratista», no
+    «de el Contratista». A partir de aquí son datos y quien edite es responsable.
+    """
+    if len(opciones_campo) != 2:
+        raise ValueError(
+            "La concordancia de género necesita un campo de exactamente dos opciones, "
+            f"y este tiene {len(opciones_campo)}."
+        )
+    fem_opcion, masc_opcion = opciones_campo
+    fem, masc = str(femenino).strip(), str(masculino).strip()
+    if not fem or not masc:
+        raise ValueError("Escribe las dos formas del sustantivo, la femenina y la masculina.")
+    base = slug_identificador(masc) or "persona"
+    derivados = {
+        base: {fem_opcion: f"la {fem}", masc_opcion: f"el {masc}"},
+        f"al_{base}": {fem_opcion: f"a la {fem}", masc_opcion: f"al {masc}"},
+        f"del_{base}": {fem_opcion: f"de la {fem}", masc_opcion: f"del {masc}"},
+    }
+    for marcador, (en_femenino, en_masculino) in CONCORDANCIA_SUELTA.items():
+        derivados[marcador] = {fem_opcion: en_femenino, masc_opcion: en_masculino}
+    return derivados
+
+
+def campo_genero(etiqueta="Género en el documento", femenino="Teletrabajadora",
+                 masculino="Teletrabajador"):
+    """Un campo de lista con las dos opciones de género y su concordancia ya generada."""
+    return completar_campo({
+        "clave": "genero",
+        "etiqueta": etiqueta,
+        "tipo": "lista",
+        "opciones": list(OPCIONES_GENERO),
+        "sinonimos": dict(SINONIMOS_GENERO),
+        "derivados": generar_concordancia(femenino, masculino, list(OPCIONES_GENERO)),
+        "ejemplo": OPCIONES_GENERO[0],
+        "ayuda": "Define la concordancia de género en todo el documento.",
+    })
 
 
 def nuevo(nombre="Otrosí nuevo"):
@@ -328,19 +392,22 @@ def validar(tipo):
 
     usados = {clave for clave, _ in _usos(cuerpo)}
     for campo in tipo["campos"]:
-        if campo["tipo"] == "genero":
-            if not set(CLAVES_CONCORDANCIA) & usados:
-                avisos.append(
-                    f"«{campo['etiqueta']}» define la concordancia de género, pero el cuerpo "
-                    "no usa ninguna de sus frases: "
-                    + ", ".join(f"{{{{{clave}}}}}" for clave in CLAVES_CONCORDANCIA)
-                )
-        elif campo["clave"] not in usados:
+        # un campo con frases derivadas cuenta como usado si el cuerpo usa cualquiera de
+        # ellas: lo normal es que la clave a secas («Femenino») no se imprima nunca
+        propios = {campo["clave"], *campo["derivados"]}
+        if not propios & usados:
             avisos.append(
                 f"«{campo['etiqueta']}» no aparece en el cuerpo: se va a pedir en el "
                 f"formulario y en el Excel, pero no se imprime en ninguna parte. Escribe "
                 f"{{{{{campo['clave']}}}}} donde deba salir, o quita el campo."
             )
+            continue
+        for marcador in campo["derivados"]:
+            if marcador not in usados:
+                avisos.append(
+                    f"La frase «{marcador}» de «{campo['etiqueta']}» no se usa en el cuerpo. "
+                    f"Escribe {{{{{marcador}}}}} donde deba salir, o bórrala de la tabla."
+                )
     return errores, avisos
 
 
@@ -351,7 +418,14 @@ def _revisar_campos(tipo):
     if not campos:
         return ["El tipo no tiene ningún campo: declara al menos el que cambia de persona a persona."]
 
-    vistas, etiquetas_vistas, generos = set(), set(), 0
+    # el contexto del render es plano: una clave de campo y una frase derivada compiten por
+    # el mismo nombre de marcador, y quien pisara a quien dependería del orden
+    ocupados = {}
+    for campo in campos:
+        for nombre in (campo.get("clave", ""), *(campo.get("derivados") or {})):
+            ocupados.setdefault(nombre, []).append(campo.get("etiqueta") or campo.get("clave"))
+
+    vistas, etiquetas_vistas = set(), set()
     fechas = {campo["clave"] for campo in campos if campo.get("tipo") == "fecha"}
     for numero, campo in enumerate(campos, start=1):
         clave, etiqueta = campo.get("clave", ""), campo.get("etiqueta", "")
@@ -362,11 +436,6 @@ def _revisar_campos(tipo):
             errores.append(
                 f"La clave «{clave}» no vale: empieza por minúscula y usa solo minúsculas "
                 "sin tildes, números y guion bajo (es lo que se escribe entre {{ }})."
-            )
-        elif clave in CLAVES_CONCORDANCIA:
-            errores.append(
-                f"La clave «{clave}» está reservada para la concordancia de género; "
-                "ponle otro nombre al campo."
             )
         elif clave in vistas:
             errores.append(f"La clave «{clave}» está repetida: cada campo necesita la suya.")
@@ -391,8 +460,14 @@ def _revisar_campos(tipo):
                 f"{rotulo} es de tipo lista y necesita al menos dos opciones: un desplegable "
                 "con un solo valor no es una elección."
             )
-        if campo.get("tipo") == "genero":
-            generos += 1
+        if repetidas := {o for o in opciones(campo) if opciones(campo).count(o) > 1}:
+            # dos opciones iguales dejarían una frase derivada sin forma de distinguirlas
+            errores.append(
+                f"{rotulo} tiene opciones repetidas: "
+                + ", ".join(f"«{opcion}»" for opcion in sorted(repetidas))
+                + ". Deja una sola de cada una."
+            )
+        errores.extend(_revisar_derivados(campo, rotulo, ocupados))
         if campo.get("posterior_a"):
             if campo["posterior_a"] not in fechas:
                 errores.append(
@@ -409,11 +484,48 @@ def _revisar_campos(tipo):
                         "las tablas o la negrita del documento."
                     )
 
-    if generos > 1:
-        errores.append(
-            "Hay más de un campo de género. La concordancia es una sola: deja un único campo "
-            "de ese tipo."
-        )
+    return errores
+
+
+def _revisar_derivados(campo, rotulo, ocupados):
+    """Errores de las frases derivadas de un campo: nombres, colisiones y cobertura."""
+    errores = []
+    derivados = campo.get("derivados") or {}
+    if not derivados:
+        return errores
+    disponibles = opciones(campo)
+    if not disponibles:
+        return [
+            f"{rotulo} tiene frases derivadas pero no tiene opciones. Una frase derivada "
+            "depende de la opción elegida, así que el campo tiene que ser de tipo lista."
+        ]
+    for marcador, por_opcion in derivados.items():
+        if not _CLAVE.match(str(marcador)):
+            errores.append(
+                f"La frase «{marcador}» de {rotulo} no sirve como marcador: empieza por "
+                "minúscula y usa solo minúsculas sin tildes, números y guion bajo."
+            )
+        if len(ocupados.get(marcador, [])) > 1:
+            errores.append(
+                f"El nombre «{marcador}» está usado dos veces (en {', '.join(f'«{d}»' for d in ocupados[marcador])}). "
+                "Un marcador solo puede venir de un sitio: cámbiale el nombre a uno de los dos."
+            )
+        if not isinstance(por_opcion, dict):
+            errores.append(f"La frase «{marcador}» de {rotulo} no trae un valor por opción.")
+            continue
+        if faltan := [opcion for opcion in disponibles if not str(por_opcion.get(opcion) or "").strip()]:
+            errores.append(
+                f"La frase «{marcador}» de {rotulo} no dice qué imprimir cuando la opción es "
+                + ", ".join(f"«{opcion}»" for opcion in faltan)
+                + ". Si alguien elige eso, el documento no se genera."
+            )
+        for opcion, frase in por_opcion.items():
+            for prohibido in ("|", "**"):
+                if prohibido in str(frase):
+                    errores.append(
+                        f"La frase «{marcador}» de {rotulo} lleva «{prohibido}» en «{opcion}», "
+                        "que rompe las tablas o la negrita del documento."
+                    )
     return errores
 
 
