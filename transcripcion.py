@@ -790,3 +790,31 @@ def _avisos(notas):
         ejemplo = f" El primero: «{datos['muestra']}»." if datos["muestra"] else ""
         frases.append(plantilla.format(n=datos["cuenta"], ej=ejemplo))
     return frases
+
+
+# --- candidatos a campo marcados a mano ------------------------------------------------
+
+_GUILLEMET = re.compile(r"«([^»]+)»")
+
+
+def marcadores_entre_guillemets(cuerpo):
+    """'... «Teletrabajadora» ... «Dias» ... «Teletrabajadora»' -> ['Teletrabajadora', 'Dias'].
+
+    Sin duplicados, en el orden de primera aparición: son candidatos a campo que
+    alguien marcó a mano en el .docx original, no texto para imprimir dos veces.
+    """
+    vistos = []
+    for palabra in _GUILLEMET.findall(cuerpo):
+        if palabra not in vistos:
+            vistos.append(palabra)
+    return vistos
+
+
+def convertir_guillemets_a_marcadores(cuerpo):
+    """'«Teletrabajadora»' -> '{{Teletrabajadora}}'; no toca el contenido, solo la puntuación.
+
+    No corrige mayúsculas ni tildes: una clave declarada tiene que ser minúscula y
+    sin tildes, así que esto deja marcadores que el revisor marcará como
+    desconocidos hasta que alguien declare el campo y renombre el marcador a juego.
+    """
+    return cuerpo.replace("«", "{{").replace("»", "}}")

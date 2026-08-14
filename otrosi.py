@@ -796,6 +796,10 @@ def _catalogo(disponibles):
                         "documento."
                     )
                 else:
+                    encontrados = transcripcion.marcadores_entre_guillemets(cuerpo)
+                    if encontrados:
+                        print(",".join(encontrados))
+                    cuerpo = transcripcion.convertir_guillemets_a_marcadores(cuerpo)
                     borrador = tipos.nuevo(word.name.rsplit(".", 1)[0] or "Otrosí nuevo")
                     borrador["cuerpo"] = cuerpo
                     _abrir(borrador, avisos_docx)
