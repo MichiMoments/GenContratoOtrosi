@@ -26,11 +26,12 @@ Five modules, and the rule that holds the whole thing together: **Streamlit live
 only in the UI layer.** Acyclic, no inverted dependencies:
 
 ```
-otrosi.py     Streamlit UI (three tabs)      -> tipos, campos, masivo, documento
-masivo.py     Excel <-> payloads + .zip      -> tipos, campos, documento
-tipos.py      type descriptors on disk       -> documento
-documento.py  marcadores -> Markdown -> docx -> (nothing)
-campos.py     coercion + validation          -> (nothing)
+otrosi.py         Streamlit UI (three tabs)      -> tipos, campos, masivo, documento, transcripcion
+masivo.py         Excel <-> payloads + .zip      -> tipos, campos, documento
+tipos.py          type descriptors on disk       -> documento
+documento.py      marcadores -> Markdown -> docx -> (nothing)
+campos.py         coercion + validation          -> (nothing)
+transcripcion.py  .docx de Word -> Markdown       -> documento, campos
 ```
 
 `campos.py` stopped importing `documento` when gender agreement became type data —
@@ -54,6 +55,10 @@ it now depends only on the standard library.
 - [documento.py](documento.py) — **no Streamlit and no template library.**
   Substitutes the type's `cuerpo` markers into Markdown, then converts that Markdown
   to a `.docx` via `python-docx`.
+- [transcripcion.py](transcripcion.py) — **no Streamlit.** The other direction:
+  reads an uploaded `.docx` and transcribes its body to the Markdown dialect above,
+  for the "Nuevo tipo, automático" button. Infers no fields and inserts no
+  `{{marcadores}}` — a person still declares those by hand in the editor.
 
 The payload is flat (not `{generales, detalle}`) because a bulk-mode spreadsheet row
 maps onto it one-to-one, with no mapping layer in between. Build those dicts with
@@ -257,6 +262,52 @@ exactly what the built-in template wants for `1. Computador:`, and warning about
 would be crying wolf. The built-in type validates with **zero errors and zero
 avisos** — keep it that way, it is what makes the checker trustworthy.
 
+## Transcribir un .docx (`transcripcion.py`)
+
+**"Nuevo tipo, automático"**, junto a "Nuevo tipo, vacío" en el catálogo de tipos,
+recibe un `.docx` con un otrosí ya redactado y transcribe su cuerpo al Markdown de
+arriba, para no teclearlo a mano. Solo el cuerpo: el encabezado, el pie y cualquier
+imagen se ignoran por completo, porque son papelería que ya pone `documento.py`.
+Esta es la primera etapa de "generación automática de plantillas" — no infiere
+campos ni inserta `{{marcadores}}`; eso lo sigue haciendo una persona en el editor.
+
+La regla que gobierna el diseño: `tipos.revisar_cuerpo` no puede sacar un solo
+**error** del resultado, porque `documento.markdown_a_docx` falla en silencio ante
+lo que no entiende. Todo lo que el dialecto no puede expresar se sanea de forma
+**visible** en vez de borrarse en silencio, y se reporta como un aviso agrupado por
+clase de cambio (no uno por ocurrencia, para no desbordar el tope de 50 mensajes de
+`otrosi._lista` en un contrato largo):
+
+- **La cursiva se descarta.** El dialecto no la tiene; el texto sobrevive, el
+  énfasis no. Ampliarlo tocaría `documento.py` y `tipos.py` —el par de mayor riesgo
+  de regresión del proyecto— y fue una decisión explícita no hacerlo.
+- **Cualquier `*` suelto se borra** y **cualquier `|` se cambia por `/`**: son
+  justo los dos caracteres que `documento.py` corrompe en silencio (ver "A `|` or
+  `**` in a field value" en Known limitations), así que no hay forma segura de
+  conservarlos tal cual.
+- **Las listas numeradas se resuelven de verdad** leyendo `numbering.xml` a mano
+  con xpath —python-docx no expone esa parte—, y se imprimen como texto literal
+  `1. `, `2. `, `a. `…, exactamente la convención que ya usa la plantilla integrada
+  para `1. Computador:`. Una viñeta de Word se convierte en `- `.
+- **Un título de Word se convierte en un párrafo en `**negrita**`**, detectado por
+  `outlineLvl` (subiendo por `base_style`) y no por el nombre del estilo, que en un
+  Word en español puede venir como «Título 1» en vez de «Heading 1».
+- **Celdas combinadas se deshacen** (el texto queda en la celda de origen, las
+  demás vacías) y **una tabla anidada en una celda se aplana** a `a / b; c / d`: el
+  dialecto tiene una sola profundidad de tabla y una celda es un solo párrafo.
+- Los controles de contenido (`w:sdt`) y los cambios ya aceptados (`w:ins`) se
+  recorren igual que el resto del cuerpo; un cambio de eliminación sin aceptar
+  (`w:del`) se descarta y se avisa. Un `.doc`, un `.rtf` o un `.pdf` renombrados a
+  `.docx` no abren: se pide volver a guardarlo desde Word.
+- Un `{{marcador}}` que el `.docx` ya trajera se conserva tal cual —es la señal de
+  que alguien adelantó a mano el trabajo de declarar campos— y el revisor lo
+  marcará como error hasta que ese campo exista en la tabla de campos.
+
+La regresión que importa comprobar aquí es la misma que ya exige el renderizador:
+generar el `.docx` de `otrosi_teletrabajo_hibrido.md` con `documento.markdown_a_docx`
+y volver a transcribirlo produce `documento._bloques` idéntico y
+`tipos.validar` con cero errores y cero avisos.
+
 ## Carga masiva (`masivo.py`)
 
 The `.xlsx` has two sheets: **`Otrosíes`** (row 1 = the type's labels in field order,
@@ -344,13 +395,18 @@ Non-obvious things that are load-bearing:
 - **The app writes to disk for the first time**, in `plantillas/personalizadas/`.
   I do not know where this app is hosted, so **I do not know whether that disk
   survives** a restart or a redeploy. If it does not, created types vanish with no
-  warning. The «Exportar .json» button is the mitigation and the editor tab says so on
-  screen. **Assumption:** the Streamlit process can write to the project directory; if
-  it cannot, `guardar` fails and `PERSONALIZADAS` has to become configurable.
+  warning **and there is no mitigation**: the «Importar/Exportar .json» buttons
+  that used to be the backup were removed from the UI on purpose, so a web-created
+  type now has no way to leave the server at all. `tipos.exportar`/`tipos.importar`
+  still exist as functions in `tipos.py` — only the buttons are gone — so restoring
+  a UI path or a CLI escape hatch is a matter of wiring, not of rebuilding logic.
+  **Assumption:** the Streamlit process can write to the project directory; if it
+  cannot, `guardar` fails and `PERSONALIZADAS` has to become configurable.
 - **No login, everything editable, no audit trail.** Anyone with the URL can rewrite
   the legal text that gets signed, and nothing records who or when beyond the file
   mtime. «Restaurar el original» recovers a built-in type; a web-created type has
-  nowhere to go back to except its exported `.json`. This was an explicit decision.
+  no way back at all now that exporting its `.json` is no longer offered in the UI.
+  This was an explicit decision.
 - **Page furniture is not configurable.** The logo and the four footer lines stay in
   `documento.py`; a type can only change the header title.
 - **Anyone pasting a contract from Word will hit the Markdown subset** — headings,
@@ -388,6 +444,14 @@ Non-obvious things that are load-bearing:
   field's `sinonimos` are generous when reading even though the template offers only
   the listed options.
 - **No per-row download in bulk mode** — it is the whole `.zip` or nothing.
+- **`transcripcion.py` infers no fields and inserts no markers.** The body comes
+  back with every per-person value as fixed text; declaring fields and marking
+  `{{marcadores}}` is still manual work in the editor. Nested tables are flattened,
+  merged cells are undone, a cell with several paragraphs becomes one line, a
+  paragraph starting with `#`, `>` or ` ``` ` is left alone (there is no way to
+  escape it without rewriting the text), indentation is rounded to the nearest
+  quarter inch, and comments/footnotes/text boxes are not read at all — they live
+  outside `w:body`'s paragraphs and tables.
 - **The dropdown arrow, the localized number formats, and whether Excel-saved cells
   come back as `datetime`/`int` can only be confirmed by opening the file in real
   Excel.** They fail *silently* (a file that opens fine but has no dropdown), not with

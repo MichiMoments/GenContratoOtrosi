@@ -10,13 +10,13 @@ import campos
 import documento
 import masivo
 import tipos
+import transcripcion
 
 from campos import FECHA_MAXIMA, FECHA_MINIMA
 
 MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MIME_ZIP = "application/zip"
-MIME_JSON = "application/json"
 
 TOPE_MENSAJES = 50  # con 300 filas la lista de errores puede tapar la pantalla entera
 
@@ -702,9 +702,9 @@ def _editor(base):
 
 
 def _acciones(borrador, errores):
-    """Los botones de guardar, exportar, descartar y borrar/restaurar."""
+    """Los botones de guardar, descartar y borrar/restaurar."""
     integrado = tipos.es_integrado(borrador["id"])
-    botones = st.columns(4)
+    botones = st.columns(3)
     with botones[0]:
         if st.button("Guardar", type="primary", disabled=bool(errores), key="tipos_guardar"):
             try:
@@ -716,17 +716,10 @@ def _acciones(borrador, errores):
                 st.session_state["tipos_mensaje"] = f"Guardado «{borrador['nombre']}»."
                 st.rerun()
     with botones[1]:
-        st.download_button(
-            "Exportar .json", data=tipos.exportar(borrador),
-            file_name=f"tipo_{borrador['id']}.json", mime=MIME_JSON,
-            on_click="ignore", key="tipos_exportar",
-            help="Guárdalo tú: es el respaldo si el servidor pierde lo guardado.",
-        )
-    with botones[2]:
         if st.button("Descartar cambios", key="tipos_descartar"):
             st.session_state.pop("borrador", None)
             st.rerun()
-    with botones[3]:
+    with botones[2]:
         rotulo = "Restaurar el original" if integrado else "Borrar el tipo"
         if st.button(rotulo, key="tipos_borrar"):
             tipos.borrar(borrador["id"])
@@ -738,9 +731,13 @@ def _acciones(borrador, errores):
             st.rerun()
 
 
-def _abrir(borrador):
+def _abrir(borrador, avisos_transcripcion=()):
     """Deja el tipo en session_state como base y siembra los widgets del editor."""
     st.session_state["borrador"] = borrador
+    # los avisos de una transcripción automática son de ESTE borrador: se fijan aquí,
+    # junto con todo lo demás que hay que sembrar al abrir un tipo, para que abrir
+    # cualquier otro los borre y para que sobrevivan al rerun de más abajo
+    st.session_state["tipos_transcripcion"] = list(avisos_transcripcion)
     st.session_state["tipos_nombre"] = borrador["nombre"]
     st.session_state["tipos_titulo"] = borrador["titulo"]
     st.session_state["tipos_prefijo"] = borrador["prefijo_archivo"]
@@ -771,23 +768,37 @@ def _catalogo(disponibles):
     if mensaje := st.session_state.pop("tipos_mensaje", None):
         st.success(mensaje)
 
-    arriba = st.columns([1, 1, 2])
+    arriba = st.columns([1.2, 2])
     with arriba[0]:
         if st.button("Nuevo tipo, vacío", key="tipos_nuevo"):
             _abrir(tipos.nuevo())
-    with arriba[1]:
-        subido = st.file_uploader(
-            "Importar un .json", type=["json"], key="tipos_importar",
-            label_visibility="collapsed",
+        word = st.file_uploader(
+            "Nuevo tipo, automático", type=["docx"], key="tipos_docx",
+            help="Sube el .docx del otrosí. Se transcribe el cuerpo a Markdown y se "
+                 "abre como tipo nuevo; los campos y los {{marcadores}} los defines tú.",
         )
-    if subido is not None:
-        importado, errores = tipos.importar(subido.getvalue())
-        if importado is None:
-            st.error(_lista(errores), title="No se pudo importar")
-        else:
-            if errores:
-                st.warning(_lista(errores), title="Se importó, pero tiene errores que corregir")
-            _abrir(importado)
+
+    if word is not None:
+        # la huella evita que el archivo, que sigue cargado tras el rerun de _abrir,
+        # reabra el mismo borrador en cada rerun posterior (p. ej. al descartar cambios)
+        huella = hashlib.sha256(word.getvalue()).hexdigest()
+        if st.session_state.get("tipos_docx_visto") != huella:
+            st.session_state["tipos_docx_visto"] = huella
+            try:
+                cuerpo, avisos_docx = transcripcion.leer_docx(word.getvalue())
+            except ValueError as error:
+                st.error(str(error), title="No se pudo leer el .docx")
+            else:
+                if not cuerpo.strip():
+                    st.error(
+                        "El .docx no trae texto en el cuerpo. El encabezado, el pie y "
+                        "las imágenes no se leen: lo que se transcribe es el texto del "
+                        "documento."
+                    )
+                else:
+                    borrador = tipos.nuevo(word.name.rsplit(".", 1)[0] or "Otrosí nuevo")
+                    borrador["cuerpo"] = cuerpo
+                    _abrir(borrador, avisos_docx)
 
     st.divider()
     for identificador, tipo in disponibles.items():
@@ -802,7 +813,7 @@ def _catalogo(disponibles):
                 + (f"⚠ {len(errores)} errores" if errores else "sin errores")
                 + (f" · {len(avisos)} avisos" if avisos else "")
             )
-            acciones = st.columns(3)
+            acciones = st.columns(2)
             with acciones[0]:
                 if st.button("Editar", key=f"editar_{identificador}"):
                     _abrir(tipos.cargar(identificador))
@@ -814,12 +825,6 @@ def _catalogo(disponibles):
                     copia["_origen"], copia["_marca"] = "nuevo", None
                     copia.pop("cuerpo_archivo", None)
                     _abrir(copia)
-            with acciones[2]:
-                st.download_button(
-                    "Exportar .json", data=tipos.exportar(tipo),
-                    file_name=f"tipo_{identificador}.json", mime=MIME_JSON,
-                    on_click="ignore", key=f"exportar_{identificador}",
-                )
 
 
 def _pestaña_tipos():
@@ -832,6 +837,13 @@ def _pestaña_tipos():
         f"Editando **{base['nombre']}** · identificador `{base['id']}`. "
         "Nada se guarda hasta que pulses «Guardar»."
     )
+    # se lee con .get y no con .pop: el editor rerenderiza en cada tecla del cuerpo, y
+    # un .pop lo borraría en el primer keystroke en vez de dejarlo mientras se revisa
+    if transcritos := st.session_state.get("tipos_transcripcion"):
+        st.warning(
+            _lista(transcritos),
+            title="El .docx se transcribió con cambios; revísalos contra el original",
+        )
     borrador = _editor(base)
     borrador["id"] = borrador["id"] or tipos.slug_identificador(borrador["nombre"])
 
