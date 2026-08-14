@@ -5,9 +5,11 @@ import hashlib
 from datetime import date
 
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 import campos
 import documento
+import ia
 import masivo
 import tipos
 import transcripcion
@@ -643,7 +645,11 @@ def _editor(base):
         tipos.completar_campo(campo) for campo in _de_tabla(filas, base["campos"])
     ]
 
-    if st.button(
+    # las frases derivadas no aplican a un tipo recién generado por la IA: un campo
+    # como «Ciudad: Bogotá/Medellín» no es de género, y ofrecer el generador de
+    # concordancia ahí sería una herramienta que no viene al caso. Es transitorio:
+    # tipos.cargar recalcula _origen en cuanto el tipo se guarda y se reabre
+    if base.get("_origen") != "automatico" and st.button(
         "Añadir un campo de género", key="tipos_add_genero",
         help="Crea el campo con sus dos opciones, sus sinónimos y las cinco frases de "
              "concordancia ya escritas. Luego puedes cambiarle el sustantivo.",
@@ -676,7 +682,8 @@ def _editor(base):
             key="tipos_campo_fecha",
         )
 
-    borrador["campos"] = _frases_derivadas(borrador["campos"])
+    if base.get("_origen") != "automatico":
+        borrador["campos"] = _frases_derivadas(borrador["campos"])
 
     st.subheader("Cuerpo del otrosí")
     ayuda, texto = st.columns([1, 3])
@@ -759,6 +766,51 @@ def _abrir(borrador, avisos_transcripcion=()):
     st.rerun()
 
 
+def _clave_gemini():
+    """La clave de .streamlit/secrets.toml, o None si no hay ni un archivo de secretos.
+
+    st.secrets.get(...) no basta: cuando no existe NINGÚN secrets.toml, leer cualquier
+    clave lanza StreamlitSecretNotFoundError en vez de devolver None (hereda de
+    FileNotFoundError, no de KeyError, así que el .get() de Mapping no lo atrapa solo).
+    """
+    try:
+        return st.secrets.get("GEMINI_API_KEY")
+    except StreamlitSecretNotFoundError:
+        return None
+
+
+def _inferir_campos(encontrados, cuerpo):
+    """Las palabras marcadas -> ([campo completo, ...], avisos); nunca hace fallar la subida.
+
+    Un fallo de la IA (sin clave configurada, red caída, respuesta cortada...) degrada
+    a "sin campos inferidos": la transcripción sigue abriendo el editor igual que hoy.
+    """
+    if not encontrados:
+        return [], []
+    try:
+        propuestas = ia.proponer_campos(encontrados, cuerpo, _clave_gemini())
+    except ValueError as error:
+        return [], [f"No se pudieron inferir los campos con IA: {error}"]
+
+    campos_generados = []
+    for indice, variable in enumerate(encontrados):
+        propuesta = dict(propuestas[indice]) if indice < len(propuestas) else {}
+        # tipos.slug_identificador garantiza una clave válida pase lo que proponga la IA;
+        # si no propuso nada para esta variable, se deriva de la palabra original
+        clave = tipos.slug_identificador(propuesta.get("clave") or variable) or f"campo_{indice + 1}"
+        propuesta["clave"] = clave
+        propuesta.setdefault("etiqueta", variable)
+        campos_generados.append(tipos.completar_campo(propuesta))
+    return campos_generados, []
+
+
+def _renombrar_marcadores(cuerpo, variables, campos_generados):
+    """'{{Teletrabajadora}}' -> '{{teletrabajadora}}'; solo cambia el marcador, no el texto."""
+    for variable, campo in zip(variables, campos_generados):
+        cuerpo = cuerpo.replace("{{" + variable + "}}", "{{" + campo["clave"] + "}}")
+    return cuerpo
+
+
 def _catalogo(disponibles):
     """La lista de tipos con sus acciones, cuando no se está editando ninguno."""
     st.caption(
@@ -784,25 +836,48 @@ def _catalogo(disponibles):
         huella = hashlib.sha256(word.getvalue()).hexdigest()
         if st.session_state.get("tipos_docx_visto") != huella:
             st.session_state["tipos_docx_visto"] = huella
-            try:
-                cuerpo, avisos_docx = transcripcion.leer_docx(word.getvalue())
-            except ValueError as error:
-                st.error(str(error), title="No se pudo leer el .docx")
-            else:
-                if not cuerpo.strip():
-                    st.error(
-                        "El .docx no trae texto en el cuerpo. El encabezado, el pie y "
-                        "las imágenes no se leen: lo que se transcribe es el texto del "
-                        "documento."
-                    )
+            # sin esto la pantalla queda inmóvil varios segundos mientras se consulta la
+            # IA, y es fácil pensar que la app se colgó; el patrón es el mismo que ya usa
+            # _pestaña_masiva para generar el .zip
+            with st.status("Procesando el documento…", expanded=True) as estado:
+                try:
+                    estado.update(label="Leyendo el .docx…")
+                    cuerpo, avisos_docx = transcripcion.leer_docx(word.getvalue())
+                except ValueError as error:
+                    estado.update(label="No se pudo leer el .docx", state="error")
+                    st.error(str(error), title="No se pudo leer el .docx")
                 else:
-                    encontrados = transcripcion.marcadores_entre_guillemets(cuerpo)
-                    if encontrados:
-                        print(",".join(encontrados))
-                    cuerpo = transcripcion.convertir_guillemets_a_marcadores(cuerpo)
-                    borrador = tipos.nuevo(word.name.rsplit(".", 1)[0] or "Otrosí nuevo")
-                    borrador["cuerpo"] = cuerpo
-                    _abrir(borrador, avisos_docx)
+                    if not cuerpo.strip():
+                        estado.update(label="El .docx no trae texto", state="error")
+                        st.error(
+                            "El .docx no trae texto en el cuerpo. El encabezado, el pie "
+                            "y las imágenes no se leen: lo que se transcribe es el texto "
+                            "del documento."
+                        )
+                    else:
+                        estado.update(label="Buscando palabras marcadas con «…»…")
+                        encontrados = transcripcion.marcadores_entre_guillemets(cuerpo)
+                        cuerpo = transcripcion.convertir_guillemets_a_marcadores(cuerpo)
+
+                        if encontrados:
+                            estado.update(
+                                label=f"Consultando la IA para {len(encontrados)} campos…"
+                            )
+                        campos_generados, avisos_ia = _inferir_campos(encontrados, cuerpo)
+                        cuerpo = _renombrar_marcadores(cuerpo, encontrados, campos_generados)
+
+                        estado.update(label="Listo.", state="complete")
+
+                        borrador = tipos.nuevo(word.name.rsplit(".", 1)[0] or "Otrosí nuevo")
+                        borrador["cuerpo"] = cuerpo
+                        if campos_generados:
+                            borrador["campos"] = campos_generados
+                        # marca transitoria: _frases_derivadas no aplica a campos que la IA
+                        # acaba de proponer (un «Ciudad: Bogotá/Medellín» no es de género), y
+                        # tipos.cargar la recalcula sola en cuanto el tipo se guarda y se
+                        # reabre, así que no hace falta limpiarla a mano en ningún otro sitio
+                        borrador["_origen"] = "automatico"
+                        _abrir(borrador, [*avisos_docx, *avisos_ia])
 
     st.divider()
     for identificador, tipo in disponibles.items():
