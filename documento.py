@@ -318,10 +318,10 @@ def markdown_a_docx(md, titulo=TITULO):
     return buffer.getvalue()
 
 
-def _slug(texto):
+def _slug(texto, maximo=100):
     """'David Pérez' -> 'david_perez'."""
     sin_tildes = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "_", sin_tildes.lower()).strip("_")
+    return re.sub(r"[^a-z0-9]+", "_", sin_tildes.lower()).strip("_")[:maximo]
 
 
 def nombre_archivo(tipo, datos):

@@ -245,9 +245,8 @@ def _pestaña_masiva(tipo):
         # el análogo masivo de no dejar descargable el documento anterior junto a un error
         st.session_state.pop("masivo", None)
 
-    # se parsea en cada rerun, sin caché: son decenas de milisegundos y elimina toda una
-    # clase de errores por caché obsoleta
-    registros, errores = masivo.leer_libro(tipo, contenido, fecha_lote)
+    with st.spinner("Leyendo el archivo…"):
+        registros, errores = masivo.leer_libro(tipo, contenido, fecha_lote)
     avisos = [aviso for registro in registros for aviso in registro["avisos"]]
     validos = [registro for registro in registros if not registro["errores"]]
 

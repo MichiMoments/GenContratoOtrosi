@@ -54,49 +54,77 @@ def construir_plantilla(tipo):
     return buffer.getvalue()
 
 
+_TECHO_FILAS = MAXIMO_FILAS + 20  # margen para filas vacías intermedias
+
+
 def leer_libro(tipo, contenido, fecha_firma_defecto):
     """Lee el .xlsx cargado -> (registros, errores): un registro por fila con datos."""
+    datos = io.BytesIO(contenido)
+
+    # pre-chequeo liviano: read_only=True no materializa celdas, así que detectar un
+    # rango inflado (alguien tocó la fila 500 000 en Excel) cuesta milisegundos
     try:
-        # sin read_only: ReadOnlyWorksheet deja max_row en None y no tiene ws.cell()
-        libro = load_workbook(io.BytesIO(contenido), data_only=True)
+        rapido = load_workbook(datos, read_only=True)
     except (zipfile.BadZipFile, InvalidFileException, KeyError, ValueError) as error:
         return [], [_ERROR_ARCHIVO.format(error)]
     try:
-        hoja = _hoja_datos(libro, tipo)
-        encabezado, mapa = _mapa_columnas(hoja, tipo)
-    except ValueError as error:
-        return [], [str(error)]
+        try:
+            hoja_rapida = rapido[HOJA_DATOS]
+        except KeyError:
+            hoja_rapida = rapido.worksheets[0] if rapido.worksheets else None
+        filas_declaradas = hoja_rapida.max_row if hoja_rapida else 0
+    finally:
+        rapido.close()
 
-    # las fechas que la hoja deja en blanco a propósito las rellena el selector del lote
-    del_lote = [
-        campo["clave"]
-        for campo in tipo["campos"]
-        if campo["opcional_en_hoja"] and campo["tipo"] == "fecha"
-    ]
+    if (filas_declaradas or 0) > _TECHO_FILAS:
+        return [], [
+            f"El archivo parece tener datos o formato hasta la fila {filas_declaradas}. "
+            f"El tope es {MAXIMO_FILAS} filas de datos. Descarga una plantilla nueva "
+            "o revisa que no haya celdas modificadas muy abajo en la hoja."
+        ]
 
-    registros, excedido = [], False
-    for numero in range(encabezado + 1, (hoja.max_row or encabezado) + 1):
-        valores = {
-            clave: hoja.cell(row=numero, column=columna).value
-            for clave, columna in mapa.items()
-        }
-        # la fila vacía se descarta antes de rellenar la fecha de firma; si no, las 300
-        # filas con formato de la plantilla parecerían filas a medio llenar
-        if _fila_vacia(valores):
-            continue
-        if len(registros) >= MAXIMO_FILAS:
-            excedido = True  # no se sigue normalizando: el lote ya está rechazado
-            break
-        for clave in del_lote:
-            if valores.get(clave) in (None, ""):
-                valores[clave] = fecha_firma_defecto
-        datos, errores, avisos = campos.normalizar(tipo, valores)
-        registros.append({
-            "fila": numero,
-            "datos": datos,
-            "errores": [f"Fila {numero} · {texto}" for texto in errores],
-            "avisos": [f"Fila {numero} · {texto}" for texto in avisos],
-        })
+    datos.seek(0)
+    try:
+        libro = load_workbook(datos, data_only=True)
+    except (zipfile.BadZipFile, InvalidFileException, KeyError, ValueError) as error:
+        return [], [_ERROR_ARCHIVO.format(error)]
+    try:
+        try:
+            hoja = _hoja_datos(libro, tipo)
+            encabezado, mapa = _mapa_columnas(hoja, tipo)
+        except ValueError as error:
+            return [], [str(error)]
+
+        del_lote = [
+            campo["clave"]
+            for campo in tipo["campos"]
+            if campo["opcional_en_hoja"] and campo["tipo"] == "fecha"
+        ]
+
+        registros, excedido = [], False
+        techo = min(hoja.max_row or encabezado, encabezado + MAXIMO_FILAS + 2)
+        for numero in range(encabezado + 1, techo + 1):
+            valores = {
+                clave: hoja.cell(row=numero, column=columna).value
+                for clave, columna in mapa.items()
+            }
+            if _fila_vacia(valores):
+                continue
+            if len(registros) >= MAXIMO_FILAS:
+                excedido = True
+                break
+            for clave in del_lote:
+                if valores.get(clave) in (None, ""):
+                    valores[clave] = fecha_firma_defecto
+            fila_datos, errores, avisos = campos.normalizar(tipo, valores)
+            registros.append({
+                "fila": numero,
+                "datos": fila_datos,
+                "errores": [f"Fila {numero} · {texto}" for texto in errores],
+                "avisos": [f"Fila {numero} · {texto}" for texto in avisos],
+            })
+    finally:
+        libro.close()
 
     _nombres_unicos(tipo, registros)
     _avisos_cruzados(tipo, registros)
@@ -113,8 +141,6 @@ def leer_libro(tipo, contenido, fecha_firma_defecto):
             f"encabezado de la hoja «{hoja.title}»."
         )
     if registros and (encabezado != 1 or _llave(hoja.title) != _llave(HOJA_DATOS)):
-        # el aviso es del archivo, no de una fila; va colgado del primer registro porque
-        # leer_libro solo devuelve (registros, errores)
         registros[0]["avisos"].insert(
             0, f"Leí los encabezados en la fila {encabezado} de la hoja «{hoja.title}»."
         )

@@ -122,10 +122,16 @@ def proponer_campos(variables, cuerpo, clave_api, modelo=MODELO_DEFECTO):
         candidatos = respuesta.json()["candidates"]
         if not candidatos:
             raise ValueError("La API de Gemini no devolvió ningún candidato.")
-        if candidatos[0].get("finishReason") == "MAX_TOKENS":
+        razon = candidatos[0].get("finishReason", "")
+        if razon == "MAX_TOKENS":
             raise ValueError(
                 "La respuesta de Gemini se cortó por el límite de tokens antes de "
                 "terminar el JSON; sube _MAXIMO_TOKENS_SALIDA o reduce el cuerpo enviado."
+            )
+        if razon not in ("STOP", ""):
+            raise ValueError(
+                f"Gemini no completó la respuesta (razón: {razon}). "
+                "Intenta de nuevo o revisa el contenido del documento."
             )
         campos = json.loads(candidatos[0]["content"]["parts"][0]["text"])
     except (KeyError, IndexError, json.JSONDecodeError, TypeError) as error:

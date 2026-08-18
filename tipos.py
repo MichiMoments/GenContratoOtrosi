@@ -322,7 +322,7 @@ def importar(contenido):
     if not isinstance(bruto, dict):
         return None, ["El archivo no contiene un objeto JSON con el tipo de otrosí."]
     bruto.pop("cuerpo_archivo", None)  # un import no puede apuntar a archivos del servidor
-    identificador = bruto.get("id") or identificador(bruto.get("nombre"))
+    identificador = bruto.get("id") or slug_identificador(bruto.get("nombre"))
     if not _llave_valida(identificador):
         return None, [
             f"El identificador «{identificador}» no es válido: solo minúsculas sin tildes, "
